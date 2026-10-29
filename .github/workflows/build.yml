@@ -1,0 +1,61 @@
+name: Build plugins
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            extra: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          - os: windows-latest
+            name: Windows
+            extra: ""
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: bash
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDEADROOM_BUILD_TESTS=ON ${{ matrix.extra }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Run DSP measurements
+        shell: bash
+        run: |
+          exe=$(find build/tests -type f \( -name DspTests -o -name DspTests.exe \) | head -1)
+          "$exe"
+
+      - name: Collect plugins
+        shell: bash
+        run: |
+          mkdir -p dist
+          for p in Roomless Duotone Lantern; do
+            base="build/plugins/$p/${p}_artefacts/Release"
+            for fmt in VST3 AU AAX Standalone; do
+              if [ -d "$base/$fmt" ]; then
+                mkdir -p "dist/$fmt"
+                cp -R "$base/$fmt/." "dist/$fmt/"
+              fi
+            done
+          done
+          ls -R dist | head -50
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeadRoom-Audio-${{ matrix.name }}
+          path: dist
