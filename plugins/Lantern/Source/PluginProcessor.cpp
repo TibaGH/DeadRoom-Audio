@@ -4,7 +4,7 @@
 using deadroom::PassiveEqModel;
 
 //==============================================================================
-/** Background thread that redesigns the linear-phase FIR whenever a control moves. */
+/** Background thread that redesigns the EQ filters whenever a control moves. */
 class LanternProcessor::Designer : public juce::Thread
 {
 public:
@@ -26,8 +26,13 @@ private:
 //==============================================================================
 static juce::String hzText (float hz)
 {
-    return hz >= 1000.0f ? juce::String (hz / 1000.0f, hz < 10000.0f ? 1 : 0).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " kHz"
-                         : juce::String ((int) hz) + " Hz";
+    if (hz >= 1000.0f)
+    {
+        const auto k = hz / 1000.0f;
+        return (std::abs (k - std::round (k)) < 0.01f ? juce::String ((int) std::round (k)) : juce::String (k, 1)) + " kHz";
+    }
+
+    return juce::String ((int) hz) + " Hz";
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout LanternProcessor::createLayout()
@@ -35,51 +40,68 @@ juce::AudioProcessorValueTreeState::ParameterLayout LanternProcessor::createLayo
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
 
-    const int defaultFreq[4]  = { 4, 4, 6, 8 };      // 100 Hz, 390 Hz, 2.2 kHz, 12 kHz
+    const int defaultFreq[4]   = { 4, 4, 6, 8 };       // 100 Hz, 390 Hz, 2.2 kHz, 12 kHz
     const bool defaultShelf[4] = { true, false, false, true };
 
-    for (int b = 0; b < PassiveEqModel::numBands; ++b)
+    for (int c = 0; c < 2; ++c)
     {
-        StringArray freqs;
+        const auto chName = c == 0 ? String ("Ch 1 ") : String ("Ch 2 ");
+        auto group = std::make_unique<AudioProcessorParameterGroup> ("ch" + String (c + 1), c == 0 ? "Channel 1" : "Channel 2", "|");
 
-        for (int i = 0; i < PassiveEqModel::numFreqs; ++i)
-            freqs.add (hzText (PassiveEqModel::bandFrequency (b, i)));
+        for (int b = 0; b < PassiveEqModel::numBands; ++b)
+        {
+            StringArray freqs;
+            for (int i = 0; i < PassiveEqModel::numFreqs; ++i)
+                freqs.add (hzText (PassiveEqModel::bandFrequency (b, i)));
 
-        const auto prefix = "Band " + String (b + 1) + " ";
+            const auto prefix = chName + "Band " + String (b + 1) + " ";
 
-        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { bandParam (b, "freq"), 1 }, prefix + "Frequency", freqs, defaultFreq[b]));
+            group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bandParam (c, b, "freq"), 1 }, prefix + "Frequency", freqs, defaultFreq[b]));
 
-        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { bandParam (b, "gain"), 1 }, prefix + "Gain",
-            NormalisableRange<float> (0.0f, PassiveEqModel::maxGainDb, PassiveEqModel::maxGainDb / 15.0f), 0.0f,
+            group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { bandParam (c, b, "gain"), 1 }, prefix + "Gain",
+                NormalisableRange<float> (0.0f, PassiveEqModel::maxGainDb, PassiveEqModel::maxGainDb / 15.0f), 0.0f,
+                AudioParameterFloatAttributes().withLabel ("dB")
+                    .withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; })));
+
+            group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { bandParam (c, b, "bw"), 1 }, prefix + "Bandwidth",
+                NormalisableRange<float> (0.0f, 10.0f, 1.0f), 5.0f,
+                AudioParameterFloatAttributes()
+                    .withStringFromValueFunction ([] (float v, int) { return v <= 0.0f ? String ("Wide") : (v >= 10.0f ? String ("Narrow") : String ((int) v)); })));
+
+            group->addChild (std::make_unique<AudioParameterBool> (ParameterID { bandParam (c, b, "shelf"), 1 }, prefix + "Shelf", defaultShelf[b]));
+
+            group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bandParam (c, b, "dir"), 1 }, prefix + "Boost/Out/Cut",
+                StringArray { "Boost", "Out", "Cut" }, (int) boost));
+        }
+
+        group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { chParam (c, "hp"), 1 }, chName + "High-pass",
+            StringArray { "Off", "12 Hz", "16 Hz", "23 Hz", "30 Hz", "39 Hz" }, 0));
+        group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { chParam (c, "lp"), 1 }, chName + "Low-pass",
+            StringArray { "Off", "52 kHz", "40 kHz", "27 kHz", "20 kHz", "15 kHz" }, 0));
+
+        group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { chParam (c, "gain"), 1 }, chName + "Gain",
+            NormalisableRange<float> (-2.5f, 2.5f, 0.5f), 0.0f,
             AudioParameterFloatAttributes().withLabel ("dB")
-                .withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; })));
+                .withStringFromValueFunction ([] (float v, int) { return (v > 0.0f ? "+" : "") + String (v, 1) + " dB"; })));
 
-        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { bandParam (b, "bw"), 1 }, prefix + "Bandwidth",
-            NormalisableRange<float> (0.0f, 10.0f, 1.0f), 5.0f,
-            AudioParameterFloatAttributes()
-                .withStringFromValueFunction ([] (float v, int) { return v <= 0.0f ? String ("Wide") : (v >= 10.0f ? String ("Narrow") : String ((int) v)); })));
+        group->addChild (std::make_unique<AudioParameterBool> (ParameterID { chParam (c, "in"), 1 }, chName + "EQ In", true));
 
-        layout.add (std::make_unique<AudioParameterBool> (ParameterID { bandParam (b, "shelf"), 1 }, prefix + "Shelf", defaultShelf[b]));
-        layout.add (std::make_unique<AudioParameterBool> (ParameterID { bandParam (b, "cut"), 1 },   prefix + "Cut",   false));
-        layout.add (std::make_unique<AudioParameterBool> (ParameterID { bandParam (b, "on"), 1 },    prefix + "In",    true));
+        layout.add (std::move (group));
     }
 
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "hp", 1 }, "High-pass",
-        StringArray { "Off", "12 Hz", "16 Hz", "23 Hz", "30 Hz", "39 Hz" }, 0));
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "lp", 1 }, "Low-pass",
-        StringArray { "Off", "52 kHz", "40 kHz", "27 kHz", "20 kHz", "15 kHz" }, 0));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "link", 1 }, "Link", true));
 
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "trim", 1 }, "Trim",
-        NormalisableRange<float> (-2.5f, 2.5f, 0.5f), 0.0f,
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "drive", 1 }, "Tube Drive",
+        NormalisableRange<float> (0.0f, 12.0f, 0.5f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("dB")
-            .withStringFromValueFunction ([] (float v, int) { return (v > 0.0f ? "+" : "") + String (v, 1) + " dB"; })));
+            .withStringFromValueFunction ([] (float v, int) { return "+" + String (v, 1) + " dB"; })));
 
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "warmth", 1 }, "Warmth",
-        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 20.0f,
-        AudioParameterFloatAttributes().withLabel ("%")
-            .withStringFromValueFunction ([] (float v, int) { return v <= 0.0f ? String ("Clean") : String ((int) v) + " %"; })));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "phase", 1 }, "Phase",
+        StringArray { "Analog", "Linear" }, 0,
+        AudioParameterChoiceAttributes().withAutomatable (false)));
 
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "eq_in", 1 }, "EQ In", true));
+    // Power switch = host bypass (1 = bypassed, so Power off)
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "bypass", 1 }, "Bypass", false));
 
     return layout;
 }
@@ -90,7 +112,13 @@ LanternProcessor::LanternProcessor()
                                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       state (*this, nullptr, "LanternState", createLayout())
 {
-    warmthParam = state.getRawParameterValue ("warmth");
+    driveParam  = state.getRawParameterValue ("drive");
+    bypassParam = state.getRawParameterValue ("bypass");
+    modeParam   = state.getRawParameterValue ("phase");
+
+    chains[0].linear = false;
+    chains[1].linear = true;
+
     designer = std::make_unique<Designer> (*this);
     designer->startThread (juce::Thread::Priority::low);
 }
@@ -110,26 +138,44 @@ bool LanternProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return layouts.getMainInputChannelSet() == out;
 }
 
-deadroom::PassiveEqSettings LanternProcessor::readSettings() const
+juce::AudioProcessorParameter* LanternProcessor::getBypassParameter() const
 {
+    return state.getParameter ("bypass");
+}
+
+bool LanternProcessor::isLinked() const
+{
+    return state.getRawParameterValue ("link")->load() > 0.5f;
+}
+
+int LanternProcessor::readMode() const
+{
+    return juce::jlimit (0, numModes - 1, (int) modeParam->load());
+}
+
+deadroom::PassiveEqSettings LanternProcessor::readSettings (int channel) const
+{
+    const int c = (channel == 1 && isLinked()) ? 0 : channel;
+
     deadroom::PassiveEqSettings s;
     auto value = [this] (const juce::String& id) { return state.getRawParameterValue (id)->load(); };
 
     for (int b = 0; b < PassiveEqModel::numBands; ++b)
     {
         auto& band = s.bands[(size_t) b];
-        band.freqIndex = (int) value (bandParam (b, "freq"));
-        band.gain      = value (bandParam (b, "gain"));
-        band.bandwidth = value (bandParam (b, "bw")) / 10.0f;
-        band.shelf     = value (bandParam (b, "shelf")) > 0.5f;
-        band.cut       = value (bandParam (b, "cut")) > 0.5f;
-        band.enabled   = value (bandParam (b, "on")) > 0.5f;
+        const int dir  = (int) value (bandParam (c, b, "dir"));
+        band.freqIndex = (int) value (bandParam (c, b, "freq"));
+        band.gain      = value (bandParam (c, b, "gain"));
+        band.bandwidth = value (bandParam (c, b, "bw")) / 10.0f;
+        band.shelf     = value (bandParam (c, b, "shelf")) > 0.5f;
+        band.cut       = dir == cut;
+        band.enabled   = dir != out;
     }
 
-    s.hpIndex = (int) value ("hp");
-    s.lpIndex = (int) value ("lp");
-    s.trimDb  = value ("trim");
-    s.eqIn    = value ("eq_in") > 0.5f;
+    s.hpIndex = (int) value (chParam (c, "hp"));
+    s.lpIndex = (int) value (chParam (c, "lp"));
+    s.trimDb  = value (chParam (c, "gain"));
+    s.eqIn    = value (chParam (c, "in")) > 0.5f;
     return s;
 }
 
@@ -140,12 +186,12 @@ bool LanternProcessor::sameSettings (const deadroom::PassiveEqSettings& a, const
         const auto& x = a.bands[i];
         const auto& y = b.bands[i];
 
-        if (x.freqIndex != y.freqIndex || x.gain != y.gain || x.bandwidth != y.bandwidth
+        if (x.freqIndex != y.freqIndex || ! juce::exactlyEqual (x.gain, y.gain) || ! juce::exactlyEqual (x.bandwidth, y.bandwidth)
             || x.shelf != y.shelf || x.cut != y.cut || x.enabled != y.enabled)
             return false;
     }
 
-    return a.hpIndex == b.hpIndex && a.lpIndex == b.lpIndex && a.trimDb == b.trimDb && a.eqIn == b.eqIn;
+    return a.hpIndex == b.hpIndex && a.lpIndex == b.lpIndex && juce::exactlyEqual (a.trimDb, b.trimDb) && a.eqIn == b.eqIn;
 }
 
 void LanternProcessor::designNow (bool immediately)
@@ -155,21 +201,46 @@ void LanternProcessor::designNow (bool immediately)
     if (! prepared.load())
         return;
 
-    const auto s = readSettings();
+    const std::array<deadroom::PassiveEqSettings, 2> settings { readSettings (0), readSettings (1) };
 
-    if (! immediately && sameSettings (s, designedSettings))
-        return;
+    // the active mode first, so what you hear updates fastest
+    const int first = readMode();
 
-    std::vector<float> fir;
-    deadroom::LinearPhaseFirDesigner::design ([&s] (double f) { return PassiveEqModel::magnitude (s, f); },
-                                           currentSampleRate, firLength, fir);
+    for (int m : { first, 1 - first })
+    {
+        auto& chain = chains[(size_t) m];
+        std::vector<float> fir;
+        const deadroom::PassiveEqSettings* firFor = nullptr;
 
-    if (immediately)
-        convolver.setImpulseImmediately (fir);
-    else
-        convolver.setImpulse (fir);
+        for (int c = 0; c < numChannels; ++c)
+        {
+            const auto& s = settings[(size_t) c];
 
-    designedSettings = s;
+            if (! immediately && designedValid[(size_t) m][(size_t) c] && sameSettings (s, designedSettings[(size_t) m][(size_t) c]))
+                continue;
+
+            // linked channels share one design
+            if (firFor == nullptr || ! sameSettings (*firFor, s))
+            {
+                auto magnitude = [&s] (double f) { return PassiveEqModel::magnitude (s, f); };
+
+                if (chain.linear)
+                    deadroom::LinearPhaseFirDesigner::design (magnitude, currentSampleRate, chain.firLength, fir);
+                else
+                    deadroom::MinimumPhaseFirDesigner::design (magnitude, currentSampleRate, chain.firLength, fir);
+
+                firFor = &s;
+            }
+
+            if (immediately)
+                chain.conv[(size_t) c].setImpulseImmediately (fir);
+            else
+                chain.conv[(size_t) c].setImpulse (fir);
+
+            designedSettings[(size_t) m][(size_t) c] = s;
+            designedValid[(size_t) m][(size_t) c] = true;
+        }
+    }
 }
 
 //==============================================================================
@@ -178,19 +249,39 @@ void LanternProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     const juce::ScopedLock sl (designLock);
 
     currentSampleRate = sampleRate;
-    firLength = sampleRate > 100000.0 ? 32768 : 16384;   // ~3 Hz resolution at 48 kHz
+    numChannels = juce::jlimit (1, 2, getTotalNumInputChannels());
 
-    const int numChannels = juce::jmax (1, getTotalNumInputChannels());
+    const int scale = sampleRate > 100000.0 ? 4 : (sampleRate > 50000.0 ? 2 : 1);
 
-    convolver.prepare (convBlock, firLength, numChannels);
-    tube.prepare (sampleRate, samplesPerBlock, numChannels);
-    tube.setWarmth (warmthParam->load() / 100.0f);
-    tube.reset();
+    // analog: minimum phase, short blocks for low latency
+    chains[0].firLength = 8192 * scale;
+    chains[0].block = 128 * scale;
 
-    const int latency = convolver.getLatencySamples() + firLength / 2 + tube.getLatencySamples();
-    setLatencySamples (latency);
-    bypassDelay.prepare (numChannels, latency);
+    // linear: symmetric FIR, ~3 Hz resolution
+    chains[1].firLength = sampleRate > 100000.0 ? 32768 : 16384;
+    chains[1].block = 512;
+
+    for (auto& chain : chains)
+    {
+        for (int c = 0; c < 2; ++c)
+            chain.conv[(size_t) c].prepare (chain.block, chain.firLength, 1);
+
+        chain.tube.prepare (sampleRate, samplesPerBlock, numChannels, chain.linear);
+        chain.tube.setDrive (driveParam->load());
+        chain.tube.reset();
+        chain.dry.prepare (numChannels, chain.latency());
+    }
+
+    for (auto& m : designedValid)
+        m.fill (false);
+
+    activeMode = readMode();
+    setLatencySamples (chains[(size_t) activeMode].latency());
+
     dryCopy.setSize (numChannels, samplesPerBlock);
+
+    bypassMix.reset (sampleRate, 0.03);
+    bypassMix.setCurrentAndTargetValue (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
 
     prepared.store (true);
     designNow (true);
@@ -198,43 +289,94 @@ void LanternProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 void LanternProcessor::releaseResources()
 {
-    convolver.reset();
-    tube.reset();
+    for (auto& chain : chains)
+    {
+        for (auto& conv : chain.conv)
+            conv.reset();
+
+        chain.tube.reset();
+        chain.dry.reset();
+    }
 }
 
 void LanternProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
-        buffer.clear (ch, 0, buffer.getNumSamples());
+    const int n = buffer.getNumSamples();
+    const int chans = juce::jmin (numChannels, buffer.getNumChannels());
 
-    // Offline bounces may run faster than the designer thread: redesign in line.
+    for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
+        buffer.clear (ch, 0, n);
+
+    // phase mode switch: change latency and start the new chain from silence
+    if (const int mode = readMode(); mode != activeMode)
+    {
+        activeMode = mode;
+        auto& chain = chains[(size_t) activeMode];
+
+        for (auto& conv : chain.conv)
+            conv.reset();
+
+        chain.tube.reset();
+        chain.dry.reset();
+        setLatencySamples (chain.latency());
+    }
+
+    // offline bounces may run faster than the designer thread: redesign in line
     if (isNonRealtime())
         designNow (false);
 
-    // keep the bypass delay line running so engaging bypass stays in time
-    const int n = buffer.getNumSamples();
+    auto& chain = chains[(size_t) activeMode];
 
-    if (n <= dryCopy.getNumSamples())
+    // dry signal at the same latency, for bypass (Power off)
+    if (dryCopy.getNumSamples() < n)
+        dryCopy.setSize (dryCopy.getNumChannels(), n, false, false, true);   // only if the host breaks its promise
+
+    for (int ch = 0; ch < chans; ++ch)
+        dryCopy.copyFrom (ch, 0, buffer, ch, 0, n);
+
+    juce::AudioBuffer<float> dryView (dryCopy.getArrayOfWritePointers(), chans, n);
+    chain.dry.process (dryView, dryView);
+
+    // passive EQ (per channel), then the tube make-up amplifier and transformer
+    for (int ch = 0; ch < chans; ++ch)
     {
-        for (int ch = 0; ch < dryCopy.getNumChannels(); ++ch)
-            dryCopy.copyFrom (ch, 0, buffer, juce::jmin (ch, buffer.getNumChannels() - 1), 0, n);
-
-        juce::AudioBuffer<float> view (dryCopy.getArrayOfWritePointers(), dryCopy.getNumChannels(), n);
-        bypassDelay.process (view, view);
+        float* ptr = buffer.getWritePointer (ch);
+        juce::AudioBuffer<float> one (&ptr, 1, n);
+        chain.conv[(size_t) ch].process (one);
     }
 
-    convolver.process (buffer);
+    chain.tube.setDrive (driveParam->load());
 
-    tube.setWarmth (warmthParam->load() / 100.0f);
-    tube.process (buffer);
+    {
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), chans, n);
+        chain.tube.process (view);
+    }
+
+    // Power off = bypass, crossfaded so it never clicks
+    bypassMix.setTargetValue (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
+
+    if (bypassMix.isSmoothing() || bypassMix.getTargetValue() > 0.0f)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float b = bypassMix.getNextValue();
+
+            for (int ch = 0; ch < chans; ++ch)
+            {
+                auto* d = buffer.getWritePointer (ch);
+                d[i] = d[i] * (1.0f - b) + dryCopy.getSample (ch, i) * b;
+            }
+        }
+    }
 }
 
 void LanternProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
-    // Latency-matched bypass: the dry signal arrives at the same time as the processed one would.
-    bypassDelay.process (buffer, buffer);
+    // hosts that bypass without the parameter: latency-matched dry signal
+    juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), juce::jmin (numChannels, buffer.getNumChannels()), buffer.getNumSamples());
+    chains[(size_t) activeMode].dry.process (view, view);
 }
 
 //==============================================================================

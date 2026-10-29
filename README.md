@@ -42,36 +42,51 @@ Zero latency, stereo only.
 
 ## Lantern (passive mastering EQ)
 
-Follows the Massive Passive Mastering version as documented by Manley and UAD:
+A two-channel passive mastering EQ with a tube make-up amplifier, after the Manley Massive
+Passive (Mastering version) as documented by Manley and UAD.
 
-- 4 overlapping bands, 11 stepped frequencies each:
+**Faceplate** (every control works like on the hardware):
+
+- Per channel, 4 overlapping bands with 11 stepped frequencies each:
   - Band 1: 22 Hz to 1 kHz, Band 2: 82 Hz to 3.9 kHz
   - Band 3: 220 Hz to 10 kHz, Band 4: 560 Hz to 27 kHz
-- Each band: Bell or Shelf (bands 1-2 shelve low, 3-4 shelve high), Boost/Cut switch,
-  stepped gain up to 11 dB (16 steps), stepped bandwidth.
-- A wide bell can only reach about 6 dB; the full 11 dB needs a narrow bandwidth.
-- Shelves are gentle (first order) when wide, and get steeper with an opposite dip as the
-  bandwidth control is turned up.
-- Bands work in parallel, like the passive network: two boosts on the same frequency do not
-  simply add up.
-- High-pass: off / 12 / 16 / 23 / 30 / 39 Hz (18 dB/oct).
-  Low-pass: off / 52 kHz (30 dB/oct) / 40 / 27 / 20 / 15 kHz (18 dB/oct).
-- Trim: -2.5 to +2.5 dB in 0.5 dB steps.
+- Per band: Boost / Out / Cut switch, Shelf / Bell switch (bands 1-2 shelve low, 3-4 high),
+  gain up to 11 dB in 16 steps, stepped bandwidth.
+- A wide bell only reaches about 6 dB; the full 11 dB needs a narrow bandwidth. Shelves are
+  gentle when wide and get steeper with an opposite dip as the bandwidth goes up.
+- Bands work in parallel like the passive network: per Manley, four bands boosting the same
+  frequency give the gain of one band, not the sum.
+- Per channel: IN (EQ in/out; the tube stages stay in circuit, as on the hardware),
+  Gain -2.5 to +2.5 dB in 0.5 dB steps, High pass off/12/16/23/30/39 Hz (18 dB/oct),
+  Low pass off/52k (30 dB/oct)/40k/27k/20k/15k (18 dB/oct).
+- Link: channel 2 follows channel 1. Power: off bypasses the plugin (it is the host's bypass
+  parameter too), crossfaded and latency-matched.
 
-The EQ curve is turned into a symmetric (linear-phase) FIR of 16384 taps and applied with
-partitioned FFT convolution. When a control moves, a background thread designs a new FIR
-and the audio crossfades to it over one block. Offline bounces redesign in line.
+**Plugin-only controls** in the strip above the faceplate:
 
-**Warmth** adds an asymmetric tube-style curve (mostly 2nd harmonic), 4x oversampled with
-linear-phase filters. Measured on a 1 kHz sine at -6 dBFS: 0.33 % THD at the default 20 %,
-1.2 % at 50 %, 3.8 % at 100 %. 0 % adds no distortion.
+- **Phase**: *Analog* uses a minimum-phase filter, which has the phase behaviour of the
+  passive LC circuit (about 3 ms latency). *Linear* uses a linear-phase FIR (about 183 ms
+  latency at 48 kHz, for mastering). Switching changes the reported latency.
+- **Tube drive**: pushes the tubes and output transformer harder (0 to +12 dB) without
+  changing the output level.
+- **Hide/Show curve**: hides the EQ curve so only the faceplate is shown.
 
-Latency: 8765 samples at 48 kHz (about 183 ms). Fine for mastering; not meant for tracking.
+The window can be resized; the UI scales.
 
-What is modelled and what is approximated: frequencies, ranges, filter values and the
-bandwidth/gain interaction follow the manuals. The exact shape of the shelf overshoot, the
-parallel-band maths and the special voicing of the 22/33 Hz and 16/27 kHz shelves are
-approximations, not a circuit simulation.
+**Tube circuit.** After the EQ, the signal runs through a model of the make-up amplifier
+described in Manley's manual: a 12AU7 voltage-gain stage and a 6922 line driver on a 300 V
+supply (Koren triode model, solved exactly per stage, including grid current), coupling
+capacitors, and an output transformer whose core saturates at low frequencies and high
+levels. It runs 4x oversampled. Measured on a 1 kHz sine: 0.06 % THD at -18 dBFS (+4 dBu,
+Manley's published figure), 0.23 % at -6 dBFS, 0.46 % at 0 dBFS, mostly 2nd harmonic; at
+30 Hz the transformer adds clearly more 3rd harmonic.
+
+What is modelled and what is estimated: frequencies, ranges, filter values, the
+bandwidth/gain interaction, the parallel bands, the tube types and the supply voltage follow
+the manuals. No schematic was available, so the EQ is modelled by its documented response
+(not component by component), and the tube stage resistor values, levels and transformer
+constants are estimates calibrated to the published THD figure. It is in the spirit of the
+hardware, not a guaranteed match.
 
 ## Building
 

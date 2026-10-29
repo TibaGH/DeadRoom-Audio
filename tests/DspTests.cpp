@@ -6,7 +6,7 @@
 #include "dsp/Baxandall.h"
 #include "dsp/PassiveEqModel.h"
 #include "dsp/LinearPhaseConvolver.h"
-#include "dsp/TubeStage.h"
+#include "dsp/TubeCircuit.h"
 
 #include <cstdio>
 #include <random>
@@ -333,14 +333,18 @@ void testPassiveEq()
     check (std::abs (deadroom::PassiveEqModel::effectiveGainDb (wideBell) - 6.0f) < 0.01f, "widest bell at full gain reaches", deadroom::PassiveEqModel::effectiveGainDb (wideBell), "dB");
     check (std::abs (deadroom::PassiveEqModel::effectiveGainDb (narrowBell) - 11.0f) < 0.01f, "narrowest bell at full gain reaches", deadroom::PassiveEqModel::effectiveGainDb (narrowBell), "dB");
 
-    deadroom::PassiveEqSettings two;
-    for (auto& b : two.bands) b.enabled = false;
-    two.bands[1] = { 9, 11.0f, 1.0f, false, false, true };   // band 2 at 2.7 kHz
-    two.bands[2] = { 6, 11.0f, 1.0f, false, false, true };   // band 3 at 2.2 kHz
-    const double single = 20.0 * std::log10 (deadroom::PassiveEqModel::bandMagnitude (1, two.bands[1], 2450.0));
-    const double both = deadroom::PassiveEqModel::magnitudeDb (two, 2450.0);
-    std::printf ("         two neighbouring +11 dB bells: one band %.1f dB, both %.1f dB (series would be %.1f dB)\n",
-                 single, both, single + 20.0 * std::log10 (deadroom::PassiveEqModel::bandMagnitude (2, two.bands[2], 2450.0)));
+    // Manley: four bands boosting at the same frequency give the gain of one band, not the sum
+    deadroom::PassiveEqSettings four;
+    four.bands[0] = { 10, 11.0f, 1.0f, false, false, true };   // 1 kHz
+    four.bands[1] = { 7,  11.0f, 1.0f, false, false, true };   // 1.2 kHz
+    four.bands[2] = { 4,  11.0f, 1.0f, false, false, true };   // 1 kHz
+    four.bands[3] = { 2,  11.0f, 1.0f, false, false, true };   // 1.2 kHz
+    deadroom::PassiveEqSettings one = four;
+    for (int b = 1; b < 4; ++b) one.bands[(size_t) b].enabled = false;
+    const double oneDb = deadroom::PassiveEqModel::magnitudeDb (one, 1000.0);
+    const double fourDb = deadroom::PassiveEqModel::magnitudeDb (four, 1000.0);
+    std::printf ("         four +11 dB bells around 1 kHz: one band %.1f dB, all four %.1f dB (series would be ~%.0f dB)\n", oneDb, fourDb, 4.0 * oneDb);
+    check (fourDb - oneDb < 2.5, "parallel bands: four boosts barely exceed one", fourDb - oneDb, "dB");
 
     deadroom::PassiveEqSettings hp;
     for (auto& b : hp.bands) b.enabled = false;
@@ -349,34 +353,68 @@ void testPassiveEq()
     check (std::abs (deadroom::PassiveEqModel::magnitudeDb (hp, 19.5) + 18.1) < 0.3, "39 Hz high-pass one octave below", deadroom::PassiveEqModel::magnitudeDb (hp, 19.5), "dB");
 }
 
-void testLanternChainLatency()
+void testLanternChainLatency (bool linear)
 {
-    std::puts ("\nLantern: whole chain (FIR + tube oversampling) latency");
+    std::printf ("\nLantern %s mode: whole chain latency\n", linear ? "linear-phase" : "analog");
 
     const double fs = 48000.0;
-    const int firLen = 16384, block = 512;
+    const int firLen = linear ? 16384 : 8192, block = linear ? 512 : 128;
 
     deadroom::PartitionedConvolver conv;
     conv.prepare (block, firLen, 1);
 
     deadroom::PassiveEqSettings flat;
     std::vector<float> fir;
-    deadroom::LinearPhaseFirDesigner::design ([&] (double f) { return deadroom::PassiveEqModel::magnitude (flat, f); }, fs, firLen, fir);
+    auto mag = [&] (double f) { return deadroom::PassiveEqModel::magnitude (flat, f); };
+
+    if (linear) deadroom::LinearPhaseFirDesigner::design (mag, fs, firLen, fir);
+    else        deadroom::MinimumPhaseFirDesigner::design (mag, fs, firLen, fir);
+
     conv.setImpulseImmediately (fir);
 
-    deadroom::TubeStage tube;
-    tube.prepare (fs, 512, 1);
-    tube.setWarmth (0.0f);
+    deadroom::TubeCircuit tube;
+    tube.prepare (fs, 512, 1, linear);
 
-    const int reported = conv.getLatencySamples() + firLen / 2 + tube.getLatencySamples();
+    const int reported = conv.getLatencySamples() + (linear ? firLen / 2 : 0) + tube.getLatencySamples();
 
     std::vector<float> x (40000, 0.0f);
-    x[1000] = 1.0f;
+    x[1000] = 0.01f;
     processInBlocks (x, [&] (auto& b) { conv.process (b); tube.process (b); }, 512);
 
     const auto peak = (int) std::distance (x.begin(), std::max_element (x.begin(), x.end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }));
-    check (peak - 1000 == reported, "impulse arrives exactly at the reported latency", peak - 1000, "samples");
+    check (std::abs (peak - 1000 - reported) <= (linear ? 0 : 2), "impulse peak at the reported latency", peak - 1000, "samples");
     std::printf ("         reported %d samples = %.1f ms\n", reported, reported * 1000.0 / fs);
+}
+
+void testMinimumPhase()
+{
+    std::puts ("\nLantern analog mode: minimum-phase FIR against the passive EQ model (48 kHz, 8192 taps)");
+
+    deadroom::PassiveEqSettings s;
+    s.bands[0] = { 4, 6.0f, 0.3f, true,  false, true };
+    s.bands[1] = { 5, 4.0f, 0.6f, false, true,  true };
+    s.bands[2] = { 7, 5.0f, 0.2f, false, false, true };
+    s.bands[3] = { 9, 3.0f, 0.5f, true,  false, true };
+    s.hpIndex = 3;
+
+    const double fs = 48000.0;
+    std::vector<float> fir;
+    deadroom::MinimumPhaseFirDesigner::design ([&] (double f) { return deadroom::PassiveEqModel::magnitude (s, f); }, fs, 8192, fir);
+
+    double maxErr = 0.0, worstF = 0.0;
+    for (double f = 30.0; f <= 20000.0; f *= std::pow (2.0, 1.0 / 12.0))
+    {
+        const double err = std::abs (responseDb (fir, f, fs) - deadroom::PassiveEqModel::magnitudeDb (s, f));
+        if (err > maxErr) { maxErr = err; worstF = f; }
+    }
+
+    check (maxErr < 0.3, "max deviation 30 Hz - 20 kHz", maxErr, "dB");
+    std::printf ("         (worst at %.0f Hz)\n", worstF);
+
+    // energy is front-loaded: no pre-ringing
+    double early = 0, total = 0;
+    for (size_t n = 0; n < fir.size(); ++n) { total += fir[n] * fir[n]; if (n < 480) early += fir[n] * fir[n]; }
+    check (early / total > 0.95, "share of energy in the first 10 ms", 100.0 * early / total, "%");
 }
 
 //==============================================================================
@@ -413,63 +451,102 @@ void testBaxandall()
 }
 
 //==============================================================================
-void testTube()
+struct Harmonics { double thd, h2, h3; };
+
+Harmonics measureTube (bool linear, double freq, double levelDb, float driveDb)
 {
-    std::puts ("\nLantern tube stage: harmonics of a 1 kHz sine at -6 dBFS");
-
     const double fs = 48000.0;
-    const int len = 1 << 16;
+    const int len = 1 << 17, analysisLen = 1 << 15;
 
-    for (float warmth : { 0.0f, 0.2f, 0.5f, 1.0f })
+    deadroom::TubeCircuit tube;
+    tube.prepare (fs, 512, 1, linear);
+    tube.setDrive (driveDb);
+    tube.reset();
+
+    const int bin = juce::jmax (1, (int) std::round (freq * analysisLen / fs));
+    const double f = bin * fs / analysisLen;
+    const float amp = (float) juce::Decibels::decibelsToGain (levelDb);
+
+    std::vector<float> x ((size_t) len);
+    for (int i = 0; i < len; ++i)
+        x[(size_t) i] = amp * (float) std::sin (juce::MathConstants<double>::twoPi * f * i / fs);
+
+    processInBlocks (x, [&] (auto& b) { tube.process (b); }, 512);
+
+    juce::dsp::FFT fft (15);
+    std::vector<float> buf ((size_t) analysisLen * 2, 0.0f);
+    for (int i = 0; i < analysisLen; ++i)
     {
-        deadroom::TubeStage tube;
-        tube.prepare (fs, 512, 1);
-        tube.setWarmth (warmth);
-        tube.reset();
+        const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) analysisLen);
+        buf[(size_t) i] = x[(size_t) (len - analysisLen + i)] * w;
+    }
+    fft.performFrequencyOnlyForwardTransform (buf.data());
 
-        std::vector<float> x ((size_t) len);
-        // pick a frequency that lands exactly on an FFT bin of the analysis window
-        const int analysisLen = 32768;
-        const int bin = (int) std::round (1000.0 * analysisLen / fs);
-        const double f = bin * fs / analysisLen;
+    auto harmonic = [&] (int h) { const int k = bin * h; return k + 1 < analysisLen / 2 ? std::max ({ buf[(size_t) k - 1], buf[(size_t) k], buf[(size_t) k + 1] }) : 0.0f; };
+    const double fund = harmonic (1);
+    double sum = 0.0;
+    for (int h = 2; h <= 9; ++h) sum += std::pow (harmonic (h) / fund, 2.0);
 
-        for (int i = 0; i < len; ++i)
-            x[(size_t) i] = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * f * i / fs);
+    return { 100.0 * std::sqrt (sum), 20.0 * std::log10 (harmonic (2) / fund + 1e-12), 20.0 * std::log10 (harmonic (3) / fund + 1e-12) };
+}
 
-        processInBlocks (x, [&] (auto& b) { tube.process (b); }, 512);
+void testTubeCircuit()
+{
+    std::puts ("\nLantern tube circuit (12AU7 + 6922 + output transformer)");
 
-        // analyse the last analysisLen samples (steady state), Hann window
-        juce::dsp::FFT fft (15);
-        std::vector<float> buf ((size_t) analysisLen * 2, 0.0f);
+    struct Case { double f, level; float drive; const char* label; };
+    const Case cases[] = {
+        { 1000.0, -18.0, 0.0f,  "1 kHz at -18 dBFS (+4 dBu)" },
+        { 1000.0,  -6.0, 0.0f,  "1 kHz at -6 dBFS" },
+        { 1000.0,   0.0, 0.0f,  "1 kHz at 0 dBFS" },
+        {   30.0,  -6.0, 0.0f,  "30 Hz at -6 dBFS (transformer)" },
+        { 1000.0, -18.0, 12.0f, "1 kHz at -18 dBFS, drive +12 dB" },
+        { 1000.0,  -6.0, 12.0f, "1 kHz at -6 dBFS, drive +12 dB" },
+    };
 
-        for (int i = 0; i < analysisLen; ++i)
+    for (const auto& c : cases)
+    {
+        const auto h = measureTube (false, c.f, c.level, c.drive);
+        std::printf ("    %-34s THD %.3f %%   H2 %6.1f dB   H3 %6.1f dB\n", c.label, h.thd, h.h2, h.h3);
+    }
+
+    const auto spec = measureTube (false, 1000.0, -18.0, 0.0f);
+    check (spec.thd > 0.03 && spec.thd < 0.12, "THD at +4 dBu, Manley spec 0.06 %", spec.thd, "%");
+
+    const auto lf = measureTube (false, 30.0, -6.0, 0.0f);
+    const auto mf = measureTube (false, 1000.0, -6.0, 0.0f);
+    check (lf.h3 > mf.h3 + 6.0, "transformer: more 3rd harmonic at 30 Hz than at 1 kHz", lf.h3 - mf.h3, "dB");
+
+    const auto pushed = measureTube (false, 1000.0, -18.0, 12.0f);
+    check (pushed.thd > 2.0 * spec.thd, "drive increases distortion", pushed.thd / spec.thd, "x");
+
+    // small-signal frequency response (sine at -30 dBFS): flat in the audio band, level-matched
+    for (bool linear : { false, true })
+    {
+        double worst = 0.0;
+        std::printf ("    %s response:", linear ? "linear" : "analog");
+
+        for (double f : { 20.0, 30.0, 100.0, 1000.0, 10000.0, 16000.0, 20000.0 })
         {
-            const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) analysisLen);
-            buf[(size_t) i] = x[(size_t) (len - analysisLen + i)] * w;
+            deadroom::TubeCircuit tube;
+            tube.prepare (48000.0, 512, 1, linear);
+            const int len = 1 << 18;
+            std::vector<float> x ((size_t) len);
+            for (int i = 0; i < len; ++i)
+                x[(size_t) i] = 0.0316f * (float) std::sin (juce::MathConstants<double>::twoPi * f * i / 48000.0);
+            auto y = x;
+            processInBlocks (y, [&] (auto& b) { tube.process (b); }, 512);
+
+            // compare RMS over the last second (steady state)
+            double ex = 0, ey = 0;
+            for (int i = len - 48000; i < len; ++i) { ex += (double) x[(size_t) i] * x[(size_t) i]; ey += (double) y[(size_t) i] * y[(size_t) i]; }
+            const double db = 10.0 * std::log10 (ey / ex);
+            std::printf ("  %g Hz %+.2f", f, db);
+            if (f >= 30.0) worst = std::max (worst, std::abs (db));
         }
 
-        fft.performFrequencyOnlyForwardTransform (buf.data());
-
-        auto harmonic = [&] (int h)
-        {
-            const int k = bin * h;
-            return std::max ({ buf[(size_t) k - 1], buf[(size_t) k], buf[(size_t) k + 1] });
-        };
-
-        const double fund = harmonic (1);
-        const double h2 = 20.0 * std::log10 (harmonic (2) / fund + 1e-12);
-        const double h3 = 20.0 * std::log10 (harmonic (3) / fund + 1e-12);
-
-        double thd = 0.0;
-        for (int h = 2; h <= 9; ++h) thd += std::pow (harmonic (h) / fund, 2.0);
-        thd = 100.0 * std::sqrt (thd);
-
-        std::printf ("    warmth %3d %%: 2nd harmonic %7.1f dB, 3rd %7.1f dB, THD %.3f %%\n", (int) (warmth * 100), h2, h3, thd);
-
-        if (warmth == 0.0f)
-            check (thd < 0.001, "warmth 0 adds no distortion (THD)", thd, "%");
-        if (warmth == 1.0f)
-            check (h2 > h3, "even (2nd) harmonic dominates at full warmth", h2 - h3, "dB");
+        std::printf ("\n");
+        check (worst < (linear ? 0.1 : 0.5), linear ? "linear mode: response 30 Hz - 20 kHz within" : "analog mode: response 30 Hz - 20 kHz within", worst, "dB");
     }
 }
 
@@ -489,9 +566,11 @@ int main()
 
     testConvolver();
     testPassiveEq();
-    testLanternChainLatency();
+    testMinimumPhase();
+    testLanternChainLatency (true);
+    testLanternChainLatency (false);
     testBaxandall();
-    testTube();
+    testTubeCircuit();
 
     std::printf ("\n%s (%d failed)\n", failures == 0 ? "All checks passed" : "Some checks failed", failures);
     return failures == 0 ? 0 : 1;

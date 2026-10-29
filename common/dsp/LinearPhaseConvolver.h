@@ -53,6 +53,74 @@ struct LinearPhaseFirDesigner
 
 //==============================================================================
 /**
+    Designs a minimum-phase FIR from a magnitude response (homomorphic / cepstral
+    method). A passive LC network is a minimum-phase system, so this gives the same
+    phase behaviour as the analog circuit with the given magnitude, with no
+    pre-ringing and (almost) no delay.
+*/
+struct MinimumPhaseFirDesigner
+{
+    static void design (const std::function<double (double)>& magnitude,
+                        double sampleRate, int firLength, std::vector<float>& result)
+    {
+        jassert (juce::isPowerOfTwo (firLength));
+
+        const int gridSize = firLength * 4;
+        const int order = juce::roundToInt (std::log2 ((double) gridSize));
+        juce::dsp::FFT fft (order);
+
+        using C = juce::dsp::Complex<float>;
+        std::vector<C> a ((size_t) gridSize), b ((size_t) gridSize);
+
+        // log magnitude on the full (symmetric) grid
+        for (int k = 0; k <= gridSize / 2; ++k)
+        {
+            const double f = (double) k * sampleRate / gridSize;
+            const float lm = (float) std::log (juce::jmax (1.0e-6, magnitude (f)));   // floor at -120 dB
+            a[(size_t) k] = C (lm, 0.0f);
+            if (k > 0 && k < gridSize / 2)
+                a[(size_t) (gridSize - k)] = C (lm, 0.0f);
+        }
+
+        // real cepstrum
+        fft.perform (a.data(), b.data(), true);
+
+        // fold the cepstrum onto positive quefrencies -> minimum phase
+        a[0] = C (b[0].real(), 0.0f);
+        for (int n = 1; n < gridSize / 2; ++n)
+            a[(size_t) n] = C (2.0f * b[(size_t) n].real(), 0.0f);
+        a[(size_t) (gridSize / 2)] = C (b[(size_t) (gridSize / 2)].real(), 0.0f);
+        for (int n = gridSize / 2 + 1; n < gridSize; ++n)
+            a[(size_t) n] = C (0.0f, 0.0f);
+
+        fft.perform (a.data(), b.data(), false);
+
+        for (auto& z : b)
+            z = std::exp (z);
+
+        fft.perform (b.data(), a.data(), true);
+
+        // keep the first firLength samples; fade out the last quarter to avoid a hard cut
+        result.assign ((size_t) firLength, 0.0f);
+        const int fadeStart = firLength * 3 / 4;
+
+        for (int n = 0; n < firLength; ++n)
+        {
+            float w = 1.0f;
+
+            if (n >= fadeStart)
+            {
+                const float t = (float) (n - fadeStart) / (float) (firLength - fadeStart);
+                w = 0.5f + 0.5f * std::cos (juce::MathConstants<float>::pi * t);
+            }
+
+            result[(size_t) n] = a[(size_t) n].real() * w;
+        }
+    }
+};
+
+//==============================================================================
+/**
     Uniformly partitioned overlap-save FFT convolution, for long FIRs.
 
     - Latency: blockSize samples (plus whatever delay is inside the FIR).

@@ -20,7 +20,8 @@ namespace deadroom
       - bell Q from ~1 (band 1) / ~1.5 (bands 2-4) at widest to ~3 at narrowest
       - shelves are first order when wide, steeper with an opposite "overshoot"
         dip/bump as the bandwidth narrows; frequencies are the half-gain point
-      - bands are wired in parallel: boosts at the same frequency do not simply add
+      - bands are wired in parallel: boosts at the same frequency do not add up;
+        per Manley, four bands boosting 20 dB at ~1 kHz give 20 dB in total
       - mastering high-pass: off/12/16/23/30/39 Hz (18 dB/oct)
       - mastering low-pass: off/52k (30 dB/oct)/40k/27k/20k/15k (18 dB/oct)
       - output trim -2.5..+2.5 dB in 0.5 dB steps
@@ -144,17 +145,23 @@ public:
         if (! s.eqIn)
             return 1.0;
 
-        // Parallel band network: boosts sum their excess gain, cuts sum their excess attenuation.
-        // Two +20 dB bands on one frequency give ~+25.6 dB instead of +40 dB, as on the hardware.
+        // Parallel band network. Each band's excess gain (boost) or excess attenuation
+        // (cut) is combined with a power mean (p = 6), a smooth stand-in for "the
+        // strongest band wins": four equal boosts give barely more than one, while
+        // bands at different frequencies still shape the curve independently.
+        constexpr double p = 6.0;
         double boost = 0.0, cut = 0.0;
 
         for (int i = 0; i < numBands; ++i)
         {
             const double h = bandMagnitude (i, s.bands[(size_t) i], f);
 
-            if (h >= 1.0) boost += h - 1.0;
-            else          cut   += 1.0 / h - 1.0;
+            if (h >= 1.0) boost += std::pow (h - 1.0, p);
+            else          cut   += std::pow (1.0 / h - 1.0, p);
         }
+
+        boost = std::pow (boost, 1.0 / p);
+        cut   = std::pow (cut,   1.0 / p);
 
         double m = (1.0 + boost) / (1.0 + cut);
 

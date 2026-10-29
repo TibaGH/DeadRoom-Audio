@@ -3,6 +3,16 @@
 #include "PluginProcessor.h"
 #include "ui/Theme.h"
 
+namespace lantern
+{
+    class Faceplate;
+}
+
+/**
+    Lantern's editor: a rack-unit faceplate with the hardware's controls, plus a
+    strip above it for the plugin-only controls (phase mode, tube drive, curve view).
+    The whole UI is drawn at a fixed design size and scaled to the window.
+*/
 class LanternEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -13,32 +23,16 @@ public:
     void resized() override;
 
 private:
-    struct BandStrip : public juce::Component
-    {
-        BandStrip (LanternProcessor& p, int bandIndex);
-        void resized() override;
-        void paint (juce::Graphics&) override;
-        void refreshReach();
-
-        LanternProcessor& processor;
-        const int band;
-        deadroom::ui::Knob freq, gain, width;
-        deadroom::ui::Switch shelf, cut, on;
-        juce::Label reach;
-    };
-
-    void refresh();
+    void setGraphVisible (bool visible);
+    int designHeight() const;
 
     LanternProcessor& processor;
     deadroom::ui::LookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 700 };
-    deadroom::ui::ResponseGraph graph;
-    std::array<std::unique_ptr<BandStrip>, 4> bands;
-    deadroom::ui::Choice highPass, lowPass;
-    deadroom::ui::Knob trim, warmth;
-    deadroom::ui::Switch eqIn;
-    juce::Rectangle<int> sideArea, warmthGlow;
-    std::unique_ptr<deadroom::ui::ParameterWatcher> watcher;
+
+    std::unique_ptr<juce::Component> content;
+    lantern::Faceplate* faceplate = nullptr;
+    bool graphVisible = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LanternEditor)
 };
