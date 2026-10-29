@@ -55,6 +55,20 @@ jobs:
           done
           ls -R dist | head -50
 
+      # GitHub's artifact zip does not keep macOS bundle permissions or symlinks,
+      # which breaks plugin bundles. Sign them ad hoc and pack them with ditto first.
+      - name: Sign and pack (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          for bundle in dist/*/*.vst3 dist/*/*.component dist/*/*.aaxplugin dist/*/*.app; do
+            [ -e "$bundle" ] || continue
+            codesign --force --deep --sign - "$bundle"
+            codesign --verify --deep --strict "$bundle"
+          done
+          ditto -c -k --keepParent dist DeadRoom-Audio-macOS.zip
+          rm -rf dist && mkdir dist && mv DeadRoom-Audio-macOS.zip dist/
+
       - uses: actions/upload-artifact@v4
         with:
           name: DeadRoom-Audio-${{ matrix.name }}

@@ -93,8 +93,9 @@ The GitHub Actions workflow builds macOS and Windows and uploads all formats as 
 
 ## Installing
 
-Download the latest build from the **Actions** tab (latest run, *Artifacts*), unzip it and
-copy each plugin to the standard folder:
+Download the latest build from the **Actions** tab (latest run, *Artifacts*) and unzip it.
+On macOS the download contains `DeadRoom-Audio-macOS.zip`; unzip that one too (double-click
+in Finder keeps the plugin bundles intact). Copy each plugin to the standard folder:
 
 | Format | macOS | Windows |
 |--------|-------|---------|
@@ -102,13 +103,20 @@ copy each plugin to the standard folder:
 | AU | `/Library/Audio/Plug-Ins/Components/` | n/a |
 | AAX | `/Library/Application Support/Avid/Audio/Plug-Ins/` | `C:\Program Files\Common Files\Avid\Audio\Plug-Ins\` |
 
-The macOS builds are not signed or notarized yet, so remove the download quarantine once:
+The macOS builds are only signed ad hoc, not with an Apple Developer ID, so macOS reports
+them as "damaged" after downloading. Remove the download quarantine once per plugin:
 
 ```bash
 sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/Lantern.vst3
 ```
 
-(repeat for each plugin you copied), then restart or rescan your DAW.
+If a plugin still refuses to load, sign it again locally:
+
+```bash
+sudo codesign --force --deep --sign - /Library/Audio/Plug-Ins/VST3/Lantern.vst3
+```
+
+Then restart or rescan your DAW.
 
 ### AAX and Pro Tools
 
