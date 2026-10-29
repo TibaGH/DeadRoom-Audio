@@ -1,19 +1,32 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "dsp/Baxandall.h"
+#include "dsp/BaxModel.h"
+#include "dsp/LinearPhaseConvolver.h"
+#include "dsp/LatencyBypass.h"
 
+/**
+    Duotone: a two-channel Baxandall mastering EQ (after the Dangerous Music BAX EQ),
+    working on Left/Right or Mid/Side.
+
+    Phase modes, as in Lantern:
+      Analog  minimum-phase EQ: the phase behaviour of the analog circuit, ~3 ms latency
+      Linear  linear-phase EQ, ~180 ms latency
+*/
 class DuotoneProcessor : public juce::AudioProcessor
 {
 public:
     DuotoneProcessor();
+    ~DuotoneProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override;
     bool isBusesLayoutSupported (const BusesLayout&) const override;
     using AudioProcessor::processBlock;
     using AudioProcessor::processBlockBypassed;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -21,7 +34,7 @@ public:
     const juce::String getName() const override { return "Duotone"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override { return 0.2; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -32,26 +45,52 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
 
-    struct ToneSettings { float bassDb, bassHz, trebleDb, trebleHz, levelDb; };
+    /** Settings in effect for channel 0 or 1; channel 1 follows 0 when linked. */
+    deadroom::BaxChannel readSettings (int channel) const;
+    bool isLinked() const;
+    bool isMidSide() const;
 
-    /** Tone settings that are actually in effect (Side follows Mid when linked). */
-    ToneSettings readTone (bool side) const;
-    float readSideHighPass() const;   // 0 = off
+    static juce::String chParam (int channel, const char* name) { return "c" + juce::String (channel + 1) + "_" + name; }
 
     juce::AudioProcessorValueTreeState state;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void updateSideHighPass (float hz);
+    class Designer;
 
-    deadroom::BaxandallToneStack midStack, sideStack;
-    juce::LinearSmoothedValue<float> midGain, sideGain;
-    juce::AudioBuffer<float> msBuffer;
+    static constexpr int numModes = 2;   // 0 = analog, 1 = linear
 
-    // 12 dB/oct Butterworth high-pass on the Side signal ("mono bass")
-    struct Biquad { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0; } sideHp;
-    float sideHpHz = -1.0f;
-    double sampleRate = 48000.0;
+    struct ModeChain
+    {
+        std::array<deadroom::PartitionedConvolver, 2> conv;
+        deadroom::DelayCompensator dry;
+        int firLength = 8192, block = 128;
+        bool linear = false;
+
+        int latency() const { return conv[0].getLatencySamples() + (linear ? firLength / 2 : 0); }
+    };
+
+    void designNow (bool immediately);
+    static bool same (const deadroom::BaxChannel&, const deadroom::BaxChannel&);
+    int readMode() const;
+
+    std::array<ModeChain, numModes> chains;
+    std::array<std::array<deadroom::BaxChannel, 2>, numModes> designedSettings;
+    std::array<std::array<bool, 2>, numModes> designedValid {};
+
+    juce::AudioBuffer<float> dryCopy;
+    juce::LinearSmoothedValue<float> bypassMix;
+
+    juce::CriticalSection designLock;
+    double currentSampleRate = 48000.0;
+    int numChannels = 2;
+    int activeMode = 0;
+    std::atomic<bool> prepared { false };
+
+    std::unique_ptr<Designer> designer;
+    std::atomic<float>* bypassParam = nullptr;
+    std::atomic<float>* modeParam = nullptr;
+    std::atomic<float>* msParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuotoneProcessor)
 };

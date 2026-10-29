@@ -31,14 +31,33 @@ Controls:
 
 Latency: 2048 samples at 44.1/48 kHz (4096 at 88.2/96 kHz).
 
-## Duotone (Mid/Side Baxandall)
+## Duotone (Baxandall mastering EQ)
 
-Separate Baxandall bass and treble shelves for the Mid and the Side signal. The shelves are
-first-order analog prototypes with the pole at the chosen frequency and a zero that moves
-with the gain, so a bigger boost reaches further into the midrange, like a real Baxandall
-tone stack. Also: Mid and Side level, a 12 dB/oct low cut on the Side signal (keeps the
-low end mono), Link (Side follows Mid) and Listen (Stereo, Mid only, Side only).
-Zero latency, stereo only.
+A two-channel Baxandall EQ for mastering and the mix bus, modelled on the documented
+behaviour of the Dangerous Music BAX EQ, working on Left/Right or Mid/Side.
+
+**Faceplate:**
+
+- Per channel: Low cut (off + 7 positions, 12 dB/oct Butterworth), Low shelf frequency
+  (8 positions), Low level, High level (both +-5 dB in 0.5 dB steps), High shelf frequency
+  (8 positions), High cut (off + 7 positions, 12 dB/oct).
+- Engage lamp (off = bypass, also the host's bypass parameter), L/R or M/S, Link
+  (channel 2 follows channel 1).
+
+**Curves**, as documented for the BAX EQ: very broad first-order shelves that keep rising
+beyond the audio band. The low shelf's listed frequency is its bottom shoulder; the high
+shelf's listed frequency is mid-slope, with the set level reached exactly one octave
+higher (5 dB at 3.2 kHz for 1.6 kHz). Published positions are used where they are
+known (low shelf 54-166 Hz, high shelf 1.6/3.4/4.8/7.1/18 kHz, low cut 12-43 Hz, high cut
+18/28/70 kHz); the other positions are estimates and marked as such in `BaxModel.h`.
+The hardware is a DC-coupled op-amp design with THD+N below 0.002 %, so Duotone adds no
+colouration of its own.
+
+**Plugin-only controls**: Phase (Analog: minimum phase, about 3 ms latency; Linear: about
+183 ms latency at 48 kHz) and Hide/Show curve. The window can be resized.
+
+No schematic is public, so the EQ is modelled on its documented response, not
+component by component.
 
 ## Lantern (passive mastering EQ)
 

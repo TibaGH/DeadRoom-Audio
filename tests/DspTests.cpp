@@ -7,6 +7,7 @@
 #include "dsp/PassiveEqModel.h"
 #include "dsp/LinearPhaseConvolver.h"
 #include "dsp/TubeCircuit.h"
+#include "dsp/BaxModel.h"
 
 #include <cstdio>
 #include <random>
@@ -550,6 +551,47 @@ void testTubeCircuit()
     }
 }
 
+void testBax()
+{
+    std::puts ("\nDuotone: Baxandall model (BAX EQ documentation)");
+
+    deadroom::BaxChannel c;
+    c.highFreq = 0;      // 1.6 kHz
+    c.highDb = 5.0f;
+    const double atShoulder = deadroom::BaxModel::magnitudeDb (c, 3200.0);
+    check (std::abs (atShoulder - 5.0) < 0.05, "high shelf 1.6 kHz +5: level at 3.2 kHz (manual: exactly 5 dB)", atShoulder, "dB");
+    check (std::abs (deadroom::BaxModel::magnitudeDb (c, 1600.0) - 3.15) < 0.6, "high shelf: listed frequency is mid-slope", deadroom::BaxModel::magnitudeDb (c, 1600.0), "dB");
+    check (deadroom::BaxModel::magnitudeDb (c, 12800.0) > 5.0, "high shelf keeps rising beyond the shoulder", deadroom::BaxModel::magnitudeDb (c, 12800.0), "dB");
+    check (deadroom::BaxModel::magnitudeDb (c, 800.0) > 1.0, "high shelf still active an octave below (800 Hz)", deadroom::BaxModel::magnitudeDb (c, 800.0), "dB");
+
+    deadroom::BaxChannel lo;
+    lo.lowFreq = 2;      // 74 Hz
+    lo.lowDb = -5.0f;
+    check (std::abs (deadroom::BaxModel::magnitudeDb (lo, 74.0) + 5.0) < 0.05, "low shelf 74 Hz -5: level at 74 Hz (bottom shoulder)", deadroom::BaxModel::magnitudeDb (lo, 74.0), "dB");
+    check (deadroom::BaxModel::magnitudeDb (lo, 296.0) < -1.0, "low shelf still active two octaves up (296 Hz)", deadroom::BaxModel::magnitudeDb (lo, 296.0), "dB");
+
+    deadroom::BaxChannel cut;
+    cut.lowCut = 2;      // 12 Hz
+    check (std::abs (deadroom::BaxModel::magnitudeDb (cut, 12.0) + 3.01) < 0.05, "low cut 12 Hz: -3 dB at the corner", deadroom::BaxModel::magnitudeDb (cut, 12.0), "dB");
+    check (std::abs (deadroom::BaxModel::magnitudeDb (cut, 6.0) + 12.3) < 0.3, "low cut: 12 dB/oct below the corner", deadroom::BaxModel::magnitudeDb (cut, 6.0), "dB");
+
+    // FIR accuracy in both modes, with everything turned
+    deadroom::BaxChannel all { 2, 3, 3.5f, -2.5f, 3, 4 };
+    for (bool linear : { false, true })
+    {
+        std::vector<float> fir;
+        auto mag = [&] (double f) { return deadroom::BaxModel::magnitude (all, f); };
+        if (linear) deadroom::LinearPhaseFirDesigner::design (mag, 48000.0, 16384, fir);
+        else        deadroom::MinimumPhaseFirDesigner::design (mag, 48000.0, 8192, fir);
+
+        double worst = 0.0;
+        for (double f = 30.0; f <= 20000.0; f *= std::pow (2.0, 1.0 / 12.0))
+            worst = std::max (worst, std::abs (responseDb (fir, f, 48000.0) - deadroom::BaxModel::magnitudeDb (all, f)));
+
+        check (worst < 0.2, linear ? "linear-phase FIR vs model, 30 Hz - 20 kHz" : "minimum-phase FIR vs model, 30 Hz - 20 kHz", worst, "dB");
+    }
+}
+
 } // namespace
 
 int main()
@@ -570,6 +612,7 @@ int main()
     testLanternChainLatency (true);
     testLanternChainLatency (false);
     testBaxandall();
+    testBax();
     testTubeCircuit();
 
     std::printf ("\n%s (%d failed)\n", failures == 0 ? "All checks passed" : "Some checks failed", failures);

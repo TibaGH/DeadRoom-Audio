@@ -3,6 +3,11 @@
 #include "PluginProcessor.h"
 #include "ui/Theme.h"
 
+/**
+    Duotone's editor: a DeadRoom rack faceplate with the hardware controls, plus a strip
+    above it for the plugin-only controls (phase mode, curve view). The UI is drawn at a
+    fixed design size and scaled to the window.
+*/
 class DuotoneEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -13,25 +18,15 @@ public:
     void resized() override;
 
 private:
-    struct Section
-    {
-        Section (DuotoneProcessor& p, const juce::String& prefix);
-        deadroom::ui::Knob bass, bassHz, treble, trebleHz, level;
-    };
-
-    void refresh();
-    void layoutSection (Section&, juce::Rectangle<int>);
+    void setGraphVisible (bool visible);
+    int designHeight() const;
 
     DuotoneProcessor& processor;
     deadroom::ui::LookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 700 };
-    deadroom::ui::ResponseGraph graph;
-    Section mid, side;
-    deadroom::ui::Knob sideHighPass;
-    deadroom::ui::Switch link;
-    deadroom::ui::Choice listen;
-    juce::Rectangle<int> midArea, sideArea;
-    std::unique_ptr<deadroom::ui::ParameterWatcher> watcher;
+
+    std::unique_ptr<juce::Component> content;
+    bool graphVisible = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuotoneEditor)
 };
