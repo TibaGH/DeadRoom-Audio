@@ -51,7 +51,7 @@ static juce::String hardwareHz (float hz)
 }
 
 //==============================================================================
-/** Draws knobs as black bakelite with a white pointer, no value arc. */
+/** Draws the faceplate knobs: black bakelite skirt with a raised bar across the top and a white index line. */
 class PanelLookAndFeel : public deadroom::ui::LookAndFeel
 {
 public:
@@ -61,38 +61,61 @@ public:
                            float start, float end, juce::Slider& s) override
     {
         const auto area = juce::Rectangle<int> (x, y, w, h).toFloat();
-        const float r = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f - 2.0f;
+        const float r = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f - 3.0f;
         const auto c = area.getCentre();
         const float angle = start + pos * (end - start);
         const float alpha = s.isEnabled() ? 1.0f : 0.45f;
+        auto circle = [c] (float radius, float dx = 0.0f, float dy = 0.0f) { return juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c.translated (dx, dy)); };
 
-        // skirt with grip ridges
-        g.setColour (juce::Colours::black.withAlpha (0.45f * alpha));
-        g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c.translated (0.0f, 2.0f)));
-        g.setColour (colours::knob.withMultipliedAlpha (alpha));
-        g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c));
+        // drop shadow on the plate
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.55f * alpha), c.translated (2.0f, 4.0f),
+                                                 juce::Colours::transparentBlack, c.translated (2.0f + r * 1.25f, 4.0f), true));
+        g.fillEllipse (circle (r * 1.25f, 2.0f, 4.0f));
 
-        g.setColour (juce::Colours::white.withAlpha (0.06f * alpha));
-        for (int i = 0; i < 36; ++i)
-        {
-            const float a = juce::MathConstants<float>::twoPi * (float) i / 36.0f;
-            g.drawLine ({ c.getPointOnCircumference (r * 0.86f, a), c.getPointOnCircumference (r - 0.5f, a) }, 1.0f);
-        }
+        // skirt: dark, lit from the top left
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff34333a).withMultipliedAlpha (alpha), c.translated (-r * 0.7f, -r * 0.7f),
+                                                 juce::Colour (0xff050506).withMultipliedAlpha (alpha), c.translated (r * 0.7f, r * 0.8f), false));
+        g.fillEllipse (circle (r));
+        g.setColour (juce::Colours::white.withAlpha (0.10f * alpha));
+        g.drawEllipse (circle (r - 0.8f), 1.0f);
 
-        // cap
-        const float capR = r * 0.78f;
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2b2a30).withMultipliedAlpha (alpha), c.translated (-capR, -capR),
-                                                 juce::Colour (0xff0b0a0d).withMultipliedAlpha (alpha), c.translated (capR, capR), false));
-        g.fillEllipse (juce::Rectangle<float> (capR * 2.0f, capR * 2.0f).withCentre (c));
+        // inner face
+        const float faceR = r * 0.80f;
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1d1c21).withMultipliedAlpha (alpha), c.translated (-faceR, -faceR),
+                                                 juce::Colour (0xff09090b).withMultipliedAlpha (alpha), c.translated (faceR, faceR), false));
+        g.fillEllipse (circle (faceR));
 
-        // pointer
-        g.setColour (colours::engraving.withMultipliedAlpha (alpha));
-        g.drawLine ({ c.getPointOnCircumference (capR * 0.25f, angle), c.getPointOnCircumference (r - 2.0f, angle) }, juce::jmax (2.0f, r * 0.09f));
+        // raised bar across the full knob, pointing at the value
+        const float barLength = r * 1.96f, barWidth = r * 0.56f;
+        juce::Path bar;
+        bar.addRoundedRectangle (-barWidth * 0.5f, -barLength * 0.5f, barWidth, barLength, barWidth * 0.45f);
+        const auto toKnob = juce::AffineTransform::rotation (angle).translated (c);
+
+        juce::Path barShadow (bar);
+        barShadow.applyTransform (toKnob.translated (1.5f, 2.5f));
+        g.setColour (juce::Colours::black.withAlpha (0.6f * alpha));
+        g.fillPath (barShadow);
+
+        bar.applyTransform (toKnob);
+
+        // shade across the bar: lit edge, dark edge
+        const auto across = juce::Point<float> (std::cos (angle), std::sin (angle)) * (barWidth * 0.5f);
+        juce::ColourGradient shade (juce::Colour (0xff3a3940).withMultipliedAlpha (alpha), c - across,
+                                    juce::Colour (0xff0b0b0d).withMultipliedAlpha (alpha), c + across, false);
+        shade.addColour (0.35, juce::Colour (0xff26252b).withMultipliedAlpha (alpha));
+        g.setGradientFill (shade);
+        g.fillPath (bar);
+        g.setColour (juce::Colours::white.withAlpha (0.12f * alpha));
+        g.strokePath (bar, juce::PathStrokeType (0.9f));
+
+        // white index line on the pointing end of the bar
+        g.setColour (juce::Colour (0xfff3efe4).withMultipliedAlpha (alpha));
+        g.drawLine ({ c.getPointOnCircumference (r * 0.30f, angle), c.getPointOnCircumference (r * 0.92f, angle) }, juce::jmax (2.0f, r * 0.10f));
 
         if (s.hasKeyboardFocus (true))
         {
-            g.setColour (colours::lamp.withAlpha (0.8f));
-            g.drawEllipse (juce::Rectangle<float> (r * 2.0f + 4.0f, r * 2.0f + 4.0f).withCentre (c), 1.5f);
+            g.setColour (juce::Colour (0xffffb04a).withAlpha (0.8f));
+            g.drawEllipse (circle (r + 3.0f), 1.5f);
         }
     }
 };
@@ -212,39 +235,89 @@ public:
         const auto b = getLocalBounds().toFloat();
         const auto c = b.getCentre();
         const float alpha = isEnabled() ? 1.0f : 0.45f;
+        const float R = juce::jmin (b.getWidth() * 0.5f, b.getHeight() * 0.24f) - 0.5f;
+        auto circle = [c] (float radius, float dx = 0.0f, float dy = 0.0f) { return juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c.translated (dx, dy)); };
+        auto chrome = [alpha] (juce::Colour light, juce::Colour dark, juce::Point<float> from, juce::Point<float> to)
+        {
+            return juce::ColourGradient (light.withMultipliedAlpha (alpha), from, dark.withMultipliedAlpha (alpha), to, false);
+        };
 
-        // mounting nut
-        const float nutR = juce::jmin (b.getWidth(), b.getHeight()) * 0.22f;
-        g.setColour (juce::Colour (0xff9a98a3).withMultipliedAlpha (alpha));
-        g.fillEllipse (juce::Rectangle<float> (nutR * 2.0f, nutR * 2.0f).withCentre (c));
+        // hex mounting nut
+        juce::Path hex;
+        for (int i = 0; i < 6; ++i)
+        {
+            const auto p = c.getPointOnCircumference (R, juce::MathConstants<float>::pi / 6.0f + (float) i * juce::MathConstants<float>::pi / 3.0f);
+            i == 0 ? hex.startNewSubPath (p) : hex.lineTo (p);
+        }
+        hex.closeSubPath();
+
         g.setColour (juce::Colours::black.withAlpha (0.5f * alpha));
-        g.drawEllipse (juce::Rectangle<float> (nutR * 2.0f, nutR * 2.0f).withCentre (c), 1.0f);
+        g.fillPath (hex, juce::AffineTransform::translation (1.0f, 2.0f));
+        g.setGradientFill (chrome (juce::Colour (0xffeeeef3), juce::Colour (0xff5d5d66), c.translated (-R, -R), c.translated (R, R)));
+        g.fillPath (hex);
+        g.setColour (juce::Colours::black.withAlpha (0.45f * alpha));
+        g.strokePath (hex, juce::PathStrokeType (0.8f));
 
-        // bat handle
-        const float reach = b.getHeight() * 0.42f;
+        // threaded bushing
+        const float bushR = R * 0.62f;
+        g.setGradientFill (chrome (juce::Colour (0xff3c3c43), juce::Colour (0xffc9c9d1), c.translated (-bushR, -bushR), c.translated (bushR, bushR)));
+        g.fillEllipse (circle (bushR));
+        g.setColour (juce::Colours::black.withAlpha (0.35f * alpha));
+        g.drawEllipse (circle (bushR * 0.82f), 0.7f);
+        g.drawEllipse (circle (bushR), 0.8f);
+
         const float dir = positions == 3 ? (position == 0 ? -1.0f : (position == 1 ? 0.0f : 1.0f))
                                          : (position == 0 ? -1.0f : 1.0f);
-        const auto tip = c.translated (0.0f, dir * reach);
 
         if (std::abs (dir) < 0.5f)
         {
-            // centre position: handle seen end-on
-            g.setColour (juce::Colour (0xffd8d6de).withMultipliedAlpha (alpha));
-            g.fillEllipse (juce::Rectangle<float> (nutR * 1.1f, nutR * 1.1f).withCentre (c));
+            // centre position: the bat points straight at you
+            const float ballR = R * 0.42f;
+            g.setColour (juce::Colours::black.withAlpha (0.45f * alpha));
+            g.fillEllipse (circle (ballR, 1.5f, 2.5f));
+            juce::ColourGradient ball (juce::Colours::white.withMultipliedAlpha (alpha), c.translated (-ballR * 0.35f, -ballR * 0.45f),
+                                       juce::Colour (0xff6f6f78).withMultipliedAlpha (alpha), c.translated (ballR, ballR), true);
+            ball.addColour (0.45, juce::Colour (0xffcfcfd6).withMultipliedAlpha (alpha));
+            g.setGradientFill (ball);
+            g.fillEllipse (circle (ballR));
         }
         else
         {
-            juce::Path bat;
-            bat.startNewSubPath (c);
-            bat.lineTo (tip);
-            g.setColour (juce::Colour (0xffd8d6de).withMultipliedAlpha (alpha));
-            g.strokePath (bat, juce::PathStrokeType (nutR * 0.75f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.fillEllipse (juce::Rectangle<float> (nutR * 0.95f, nutR * 0.95f).withCentre (tip));
+            // bat handle, tapering towards a rounded tip, seen from slightly above
+            const float length = b.getHeight() * 0.46f;
+            const auto tip = c.translated (0.0f, dir * length);
+            const float baseHalf = R * 0.30f, tipHalf = R * 0.22f;
+
+            juce::Path handle;
+            handle.startNewSubPath (c.x - baseHalf, c.y);
+            handle.lineTo (tip.x - tipHalf, tip.y);
+            handle.lineTo (tip.x + tipHalf, tip.y);
+            handle.lineTo (c.x + baseHalf, c.y);
+            handle.closeSubPath();
+
+            g.setColour (juce::Colours::black.withAlpha (0.45f * alpha));
+            g.fillPath (handle, juce::AffineTransform::translation (2.0f, 3.0f));
+            g.fillEllipse (juce::Rectangle<float> (tipHalf * 2.6f, tipHalf * 2.6f).withCentre (tip.translated (2.0f, 3.0f)));
+
+            juce::ColourGradient metal (juce::Colour (0xff6a6a73).withMultipliedAlpha (alpha), { c.x - baseHalf, c.y },
+                                        juce::Colour (0xff55555e).withMultipliedAlpha (alpha), { c.x + baseHalf, c.y }, false);
+            metal.addColour (0.38, juce::Colour (0xfff6f6fa).withMultipliedAlpha (alpha));
+            metal.addColour (0.62, juce::Colour (0xffb9b9c2).withMultipliedAlpha (alpha));
+            g.setGradientFill (metal);
+            g.fillPath (handle);
+
+            // rounded tip
+            const float tipR = tipHalf * 1.3f;
+            juce::ColourGradient ball (juce::Colours::white.withMultipliedAlpha (alpha), tip.translated (-tipR * 0.35f, -tipR * 0.4f),
+                                       juce::Colour (0xff66666f).withMultipliedAlpha (alpha), tip.translated (tipR, tipR), true);
+            ball.addColour (0.5, juce::Colour (0xffc9c9d0).withMultipliedAlpha (alpha));
+            g.setGradientFill (ball);
+            g.fillEllipse (juce::Rectangle<float> (tipR * 2.0f, tipR * 2.0f).withCentre (tip));
         }
 
         if (hasKeyboardFocus (false))
         {
-            g.setColour (colours::lamp.withAlpha (0.8f));
+            g.setColour (juce::Colour (0xffffb04a).withAlpha (0.8f));
             g.drawRoundedRectangle (b.reduced (1.0f), 4.0f, 1.2f);
         }
     }
@@ -268,50 +341,100 @@ private:
 };
 
 //==============================================================================
-/** Round indicator lamp that is also the switch (EQ In). */
-class Lamp : public juce::ToggleButton
+/**
+    A warm incandescent pilot lamp that is also the switch. The glow is drawn as a
+    smooth radial falloff inside the component, so it never clips.
+*/
+class Lamp : public juce::Button
 {
 public:
-    Lamp (juce::AudioProcessorValueTreeState& state, const juce::String& paramId)
+    Lamp (juce::RangedAudioParameter& param, juce::Colour warmColour, bool invertedParam = false)
+        : juce::Button (param.getName (64)), colour (warmColour), inverted (invertedParam),
+          attachment (param, [this] (float v) { setToggleState ((v > 0.5f) != inverted, juce::dontSendNotification); repaint(); }, nullptr)
     {
-        attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, paramId, *this);
-        setTitle (state.getParameter (paramId)->getName (64));
+        setClickingTogglesState (false);
+        onClick = [this] { attachment.setValueAsCompleteGesture (((! getToggleState()) != inverted) ? 1.0f : 0.0f); };
+        setTitle (param.getName (64));
+        attachment.sendInitialUpdate();
+    }
+
+    bool hitTest (int x, int y) override
+    {
+        return getLocalBounds().toFloat().getCentre().getDistanceFrom ({ (float) x, (float) y }) < lensRadius() + 5.0f;
     }
 
     void paintButton (juce::Graphics& g, bool highlighted, bool) override
     {
         const auto b = getLocalBounds().toFloat();
-        const float r = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f - 3.0f;
         const auto c = b.getCentre();
+        const float r = lensRadius();
         const bool on = getToggleState();
         const float alpha = isEnabled() ? 1.0f : 0.45f;
+        auto circle = [c] (float radius) { return juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c); };
 
+        // soft glow on the plate
         if (on)
         {
-            g.setGradientFill (juce::ColourGradient (colours::lamp.withAlpha (0.5f * alpha), c,
-                                                     colours::lamp.withAlpha (0.0f), c.translated (r * 2.2f, 0.0f), true));
-            g.fillEllipse (juce::Rectangle<float> (r * 4.4f, r * 4.4f).withCentre (c));
+            const float glowR = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
+            juce::ColourGradient glow (colour.withAlpha (0.65f * alpha), c, colour.withAlpha (0.0f), c.translated (glowR, 0.0f), true);
+            glow.addColour (0.25, colour.withAlpha (0.38f * alpha));
+            glow.addColour (0.55, colour.withAlpha (0.12f * alpha));
+            glow.addColour (0.80, colour.withAlpha (0.03f * alpha));
+            g.setGradientFill (glow);
+            g.fillEllipse (circle (glowR));
         }
 
-        g.setColour (juce::Colour (0xff9a98a3).withMultipliedAlpha (alpha));
-        g.fillEllipse (juce::Rectangle<float> (r * 2.0f + 4.0f, r * 2.0f + 4.0f).withCentre (c));
+        // chrome bezel
+        g.setColour (juce::Colours::black.withAlpha (0.5f * alpha));
+        g.fillEllipse (circle (r + 4.0f).translated (1.0f, 2.0f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffeeeef3).withMultipliedAlpha (alpha), c.translated (-r, -r),
+                                                 juce::Colour (0xff4f4f58).withMultipliedAlpha (alpha), c.translated (r, r), false));
+        g.fillEllipse (circle (r + 4.0f));
+        g.setColour (juce::Colours::black.withAlpha (0.6f * alpha));
+        g.fillEllipse (circle (r + 1.0f));
 
-        g.setGradientFill (juce::ColourGradient ((on ? colours::lamp.brighter (0.6f) : juce::Colour (0xff2a3340)).withMultipliedAlpha (alpha),
-                                                 c.translated (-r * 0.4f, -r * 0.4f),
-                                                 (on ? colours::lamp.darker (0.3f) : juce::Colour (0xff141a22)).withMultipliedAlpha (alpha),
-                                                 c.translated (r, r), true));
-        g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c));
+        // domed glass lens
+        if (on)
+        {
+            juce::ColourGradient lens (juce::Colour (0xfffff3d6).withMultipliedAlpha (alpha), c.translated (-r * 0.15f, -r * 0.2f),
+                                       colour.darker (0.55f).withMultipliedAlpha (alpha), c.translated (r, r), true);
+            lens.addColour (0.35, colour.brighter (0.4f).withMultipliedAlpha (alpha));
+            lens.addColour (0.75, colour.withMultipliedAlpha (alpha));
+            g.setGradientFill (lens);
+        }
+        else
+        {
+            g.setGradientFill (juce::ColourGradient (colour.darker (1.6f).withMultipliedAlpha (alpha), c.translated (-r * 0.3f, -r * 0.3f),
+                                                     colour.darker (3.5f).withMultipliedAlpha (alpha), c.translated (r, r), true));
+        }
+
+        g.fillEllipse (circle (r));
+
+        // specular highlight
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha ((on ? 0.55f : 0.35f) * alpha), c.translated (-r * 0.35f, -r * 0.5f),
+                                                 juce::Colours::white.withAlpha (0.0f), c.translated (-r * 0.35f, r * 0.05f), false));
+        g.fillEllipse (juce::Rectangle<float> (r * 1.1f, r * 0.7f).withCentre (c.translated (-r * 0.25f, -r * 0.45f)));
 
         if (highlighted || hasKeyboardFocus (false))
         {
-            g.setColour (colours::engraving.withAlpha (0.5f));
-            g.drawEllipse (juce::Rectangle<float> (r * 2.0f + 8.0f, r * 2.0f + 8.0f).withCentre (c), 1.0f);
+            g.setColour (colours::engraving.withAlpha (0.45f));
+            g.drawEllipse (circle (r + 6.0f), 1.0f);
         }
     }
 
 private:
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachment;
+    float lensRadius() const { return 10.0f; }
+
+    juce::Colour colour;
+    bool inverted;
+    juce::ParameterAttachment attachment;
 };
+
+namespace lamps
+{
+    const juce::Colour incandescent { 0xffffa63d };   // warm amber pilot lamp
+    const juce::Colour jewelRed     { 0xffff5a2a };   // warm red-orange power jewel
+}
 
 //==============================================================================
 /** One EQ band of one channel: switch window, gain, bandwidth and frequency. */
@@ -350,55 +473,75 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (8, 6);
-        windowArea = r.removeFromTop (78);
+        auto r = getLocalBounds().reduced (6, 4);
+        windowArea = r.removeFromTop (80);
 
-        auto w = windowArea.reduced (4, 0).withTrimmedTop (18).withTrimmedBottom (4);
+        // switch window: lever centred in each half, labels above, below and beside it
+        auto w = windowArea.withTrimmedTop (16).withTrimmedBottom (2);
         auto leftHalf = w.removeFromLeft (w.getWidth() / 2);
-        direction.setBounds (leftHalf.removeFromLeft (18));
-        dirLabels = leftHalf.withTrimmedLeft (3);
-        shape.setBounds (w.removeFromLeft (18));
-        shapeLabels = w.withTrimmedLeft (3);
+        dirArea = leftHalf;
+        direction.setBounds (leftHalf.withSizeKeepingCentre (22, 38).translated (-6, 0));
+        shapeArea = w;
+        shape.setBounds (w.withSizeKeepingCentre (22, 38));
 
-        r.removeFromTop (6);
-        gainArea = r.removeFromTop (84);
+        r.removeFromTop (8);
+        wellArea = r;
+
+        r.removeFromTop (16);   // well screw
+        gainArea = r.removeFromTop (78);
         gain.setBounds (gainArea);
-        r.removeFromTop (14);
-        widthArea = r.removeFromTop (72);
+        r.removeFromTop (12);
+        widthArea = r.removeFromTop (64);
         width.setBounds (widthArea);
-        r.removeFromTop (14);
-        freq.setBounds (r.removeFromTop (132));
+        r.removeFromTop (12);
+        freq.setBounds (r.removeFromTop (124));
     }
 
     void paint (juce::Graphics& g) override
     {
         const float alpha = isEnabled() ? 1.0f : 0.45f;
 
-        // recessed well
-        g.setColour (colours::well);
-        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (2.0f), 22.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (2.5f), 22.0f, 1.0f);
-
-        // switch window
+        // switch window: black panel with a thin bevel
+        const auto wa = windowArea.toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.4f));
+        g.fillRoundedRectangle (wa.translated (0.0f, 1.5f), 8.0f);
         g.setColour (colours::window);
-        g.fillRoundedRectangle (windowArea.toFloat(), 6.0f);
+        g.fillRoundedRectangle (wa, 8.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.10f));
+        g.drawRoundedRectangle (wa.reduced (0.5f), 8.0f, 1.0f);
 
-        g.setFont (engraved (11.5f));
+        g.setFont (engraved (11.0f));
         g.setColour (colours::engraving.withMultipliedAlpha (alpha));
         g.drawText (hardwareHz (PassiveEqModel::bandFrequency (band, 0)) + " - " + hardwareHz (PassiveEqModel::bandFrequency (band, 10)),
-                    windowArea.withHeight (18).translated (0, 2), juce::Justification::centred);
+                    windowArea.withHeight (16).translated (0, 2), juce::Justification::centred);
 
         g.setFont (engraved (9.5f));
-        auto dl = dirLabels;
-        const int third = dl.getHeight() / 3;
-        drawLit (g, "BOOST", dl.removeFromTop (third), currentDirection == LanternProcessor::boost ? colours::boost : colours::engraving.withAlpha (0.55f), alpha);
-        drawLit (g, "OUT", dl.removeFromTop (third), colours::engraving.withAlpha (currentDirection == LanternProcessor::out ? 1.0f : 0.55f), alpha);
-        drawLit (g, "CUT", dl, currentDirection == LanternProcessor::cut ? colours::cut : colours::engraving.withAlpha (0.55f), alpha);
+        const auto dl = direction.getBounds();
+        drawLit (g, "BOOST", { dirArea.getX(), dl.getY() - 11, dl.getRight() - dirArea.getX() + 14, 11 },
+                 currentDirection == LanternProcessor::boost ? colours::boost : colours::engraving.withAlpha (0.6f), alpha, juce::Justification::centred);
+        drawLit (g, "CUT", { dirArea.getX(), dl.getBottom(), dl.getRight() - dirArea.getX() + 14, 11 },
+                 currentDirection == LanternProcessor::cut ? colours::cut : colours::engraving.withAlpha (0.6f), alpha, juce::Justification::centred);
+        drawLit (g, "OUT", { dl.getRight(), dl.getCentreY() - 6, dirArea.getRight() - dl.getRight(), 12 },
+                 colours::engraving.withAlpha (currentDirection == LanternProcessor::out ? 1.0f : 0.6f), alpha, juce::Justification::centredLeft);
 
-        auto sl = shapeLabels;
-        drawLit (g, "SHELF", sl.removeFromTop (sl.getHeight() / 2), colours::engraving.withAlpha (currentShelf ? 1.0f : 0.55f), alpha);
-        drawLit (g, "BELL", sl, colours::engraving.withAlpha (currentShelf ? 0.55f : 1.0f), alpha);
+        const auto sb = shape.getBounds();
+        drawLit (g, "SHELF", { shapeArea.getX(), sb.getY() - 11, shapeArea.getWidth(), 11 },
+                 colours::engraving.withAlpha (currentShelf ? 1.0f : 0.6f), alpha, juce::Justification::centred);
+        drawLit (g, "BELL", { shapeArea.getX(), sb.getBottom(), shapeArea.getWidth(), 11 },
+                 colours::engraving.withAlpha (currentShelf ? 0.6f : 1.0f), alpha, juce::Justification::centred);
+
+        // recessed oval well with a screw at each end
+        const auto well = wellArea.toFloat();
+        const float rad = well.getWidth() * 0.5f;
+        g.setColour (juce::Colours::white.withAlpha (0.07f));
+        g.fillRoundedRectangle (well.translated (0.0f, 1.0f), rad);
+        g.setColour (colours::well);
+        g.fillRoundedRectangle (well, rad);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.drawRoundedRectangle (well.reduced (0.5f), rad, 1.2f);
+
+        drawScrew (g, { well.getCentreX(), well.getY() + 10.0f });
+        drawScrew (g, { well.getCentreX(), well.getBottom() - 10.0f });
 
         // engraved captions
         g.setColour (colours::engraving.withMultipliedAlpha (alpha));
@@ -408,17 +551,40 @@ public:
         g.drawText ("dB", juce::Rectangle<float> (gc.getCentreX() - 10.0f, gc.getBottom() - 14.0f, 20.0f, 12.0f), juce::Justification::centred);
         g.drawText ("11", juce::Rectangle<float> (gc.getCentreX() + 20.0f, gc.getBottom() - 14.0f, 14.0f, 12.0f), juce::Justification::centred);
 
-        g.setFont (engraved (10.5f));
-        g.drawText ("GAIN", juce::Rectangle<int> (0, gainArea.getBottom() - 1, getWidth(), 14), juce::Justification::centred);
-        g.drawText ("FREQUENCY HZ", juce::Rectangle<int> (0, widthArea.getBottom() - 1, getWidth(), 14), juce::Justification::centred);
+        g.setFont (engraved (10.0f));
+        g.drawText ("BANDWIDTH", juce::Rectangle<int> (0, gainArea.getBottom() - 1, getWidth(), 13), juce::Justification::centred);
+        g.drawText ("FREQUENCY HZ", juce::Rectangle<int> (0, widthArea.getBottom() - 1, getWidth(), 13), juce::Justification::centred);
 
-        // bandwidth glyphs: wide bell on the left, narrow bell on the right
+        // bandwidth glyphs, as engraved on the hardware: bells above, shelves below;
+        // wide and gentle on the left, narrow and steep on the right
         const auto wc = widthArea.toFloat();
-        drawBell (g, { wc.getCentreX() - 50.0f, wc.getCentreY() + 4.0f }, 15.0f, 7.0f, alpha);
-        drawBell (g, { wc.getCentreX() + 50.0f, wc.getCentreY() + 4.0f }, 6.0f, 9.0f, alpha);
+        const float gx = 40.0f;
+        drawBell  (g, { wc.getCentreX() - gx, wc.getY() + 16.0f }, 9.0f, 8.0f, alpha);
+        drawBell  (g, { wc.getCentreX() + gx, wc.getY() + 16.0f }, 4.0f, 9.0f, alpha);
+        drawShelf (g, { wc.getCentreX() - gx, wc.getCentreY() + 12.0f }, false, alpha);
+        drawShelf (g, { wc.getCentreX() + gx, wc.getCentreY() + 12.0f }, true, alpha);
     }
 
 private:
+    static void drawScrew (juce::Graphics& g, juce::Point<float> c)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre (c.translated (0.5f, 1.0f)));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe2e1e8), c.translated (-4.0f, -4.0f),
+                                                 juce::Colour (0xff6c6a76), c.translated (5.0f, 5.0f), true));
+        g.fillEllipse (juce::Rectangle<float> (11.0f, 11.0f).withCentre (c));
+
+        juce::Path socket;   // hex socket
+        for (int i = 0; i < 6; ++i)
+        {
+            const auto p = c.getPointOnCircumference (2.8f, (float) i * juce::MathConstants<float>::pi / 3.0f);
+            i == 0 ? socket.startNewSubPath (p) : socket.lineTo (p);
+        }
+        socket.closeSubPath();
+        g.setColour (juce::Colour (0xff2c2a32));
+        g.fillPath (socket);
+    }
+
     static juce::StringArray frequencyLabels (int band)
     {
         juce::StringArray s;
@@ -427,10 +593,32 @@ private:
         return s;
     }
 
-    static void drawLit (juce::Graphics& g, const juce::String& t, juce::Rectangle<int> r, juce::Colour c, float alpha)
+    static void drawLit (juce::Graphics& g, const juce::String& t, juce::Rectangle<int> r, juce::Colour c, float alpha,
+                         juce::Justification just = juce::Justification::centredLeft)
     {
         g.setColour (c.withMultipliedAlpha (alpha));
-        g.drawFittedText (t, r, juce::Justification::centredLeft, 1, 0.65f);
+        g.drawFittedText (t, r, just, 1, 0.7f);
+    }
+
+    static void drawShelf (juce::Graphics& g, juce::Point<float> c, bool steep, float alpha)
+    {
+        juce::Path p;
+        p.startNewSubPath (c.x - 13.0f, c.y - 6.0f);
+
+        if (steep)
+        {
+            // steep shelf with the opposite overshoot of a narrow setting
+            p.lineTo (c.x - 4.0f, c.y - 6.0f);
+            p.cubicTo (c.x - 1.0f, c.y - 6.0f, c.x - 1.0f, c.y + 6.0f, c.x + 3.0f, c.y + 6.0f);
+            p.cubicTo (c.x + 6.0f, c.y + 6.0f, c.x + 6.0f, c.y + 3.0f, c.x + 13.0f, c.y + 3.0f);
+        }
+        else
+        {
+            p.cubicTo (c.x - 4.0f, c.y - 6.0f, c.x + 2.0f, c.y + 3.0f, c.x + 13.0f, c.y + 3.0f);
+        }
+
+        g.setColour (colours::engraving.withMultipliedAlpha (alpha));
+        g.strokePath (p, juce::PathStrokeType (1.3f));
     }
 
     static void drawBell (juce::Graphics& g, juce::Point<float> c, float halfWidth, float height, float alpha)
@@ -446,7 +634,7 @@ private:
     int channel, band;
     Lever direction, shape;
     ScaleKnob gain, width, freq;
-    juce::Rectangle<int> windowArea, gainArea, widthArea, dirLabels, shapeLabels;
+    juce::Rectangle<int> windowArea, gainArea, widthArea, dirArea, shapeArea, wellArea;
     int currentDirection = 0;
     bool currentShelf = false;
 };
@@ -458,20 +646,18 @@ class Faceplate : public juce::Component
 public:
     explicit Faceplate (LanternProcessor& p)
         : processor (p),
-          power (*p.state.getParameter ("bypass"), 2,
-                 [] (float v) { return v > 0.5f ? 1 : 0; },               // top = power on (not bypassed)
-                 [] (int pos) { return pos == 0 ? 0.0f : 1.0f; }),
+          power (*p.state.getParameter ("bypass"), lamps::jewelRed, true),   // lit = powered (not bypassed)
           link (*p.state.getParameter ("link"), 2,
                 [] (float v) { return v > 0.5f ? 0 : 1; },
                 [] (int pos) { return pos == 0 ? 1.0f : 0.0f; }),
-          in1 (p.state, LanternProcessor::chParam (0, "in")),
-          in2 (p.state, LanternProcessor::chParam (1, "in")),
-          gain1 (p.state, LanternProcessor::chParam (0, "gain"), { "-2.5", "", "", "", "", "0", "", "", "", "", "+2.5" }, 0.46f),
-          gain2 (p.state, LanternProcessor::chParam (1, "gain"), { "-2.5", "", "", "", "", "0", "", "", "", "", "+2.5" }, 0.46f),
-          lp1 (p.state, LanternProcessor::chParam (0, "lp"), { "OFF", "52K", "40K", "27K", "20K", "15K" }, 0.46f),
-          lp2 (p.state, LanternProcessor::chParam (1, "lp"), { "OFF", "52K", "40K", "27K", "20K", "15K" }, 0.46f),
-          hp1 (p.state, LanternProcessor::chParam (0, "hp"), { "OFF", "12", "16", "23", "30", "39" }, 0.46f),
-          hp2 (p.state, LanternProcessor::chParam (1, "hp"), { "OFF", "12", "16", "23", "30", "39" }, 0.46f)
+          in1 (*p.state.getParameter (LanternProcessor::chParam (0, "in")), lamps::incandescent),
+          in2 (*p.state.getParameter (LanternProcessor::chParam (1, "in")), lamps::incandescent),
+          gain1 (p.state, LanternProcessor::chParam (0, "gain"), { "-2.5", "", "", "", "", "0", "", "", "", "", "+2.5" }, 0.5f),
+          gain2 (p.state, LanternProcessor::chParam (1, "gain"), { "-2.5", "", "", "", "", "0", "", "", "", "", "+2.5" }, 0.5f),
+          lp1 (p.state, LanternProcessor::chParam (0, "lp"), { "OFF", "52K", "40K", "27K", "20K", "15K" }, 0.5f),
+          lp2 (p.state, LanternProcessor::chParam (1, "lp"), { "OFF", "52K", "40K", "27K", "20K", "15K" }, 0.5f),
+          hp1 (p.state, LanternProcessor::chParam (0, "hp"), { "OFF", "12", "16", "23", "30", "39" }, 0.5f),
+          hp2 (p.state, LanternProcessor::chParam (1, "hp"), { "OFF", "12", "16", "23", "30", "39" }, 0.5f)
     {
         setLookAndFeel (&panelLnf);
 
@@ -541,33 +727,33 @@ public:
         place (1);
 
         auto cr = centre.reduced (6, 0);
-        logoArea = cr.removeFromTop (92);
+        logoArea = cr.removeFromTop (84);
 
         auto row1 = cr.removeFromTop (54);
         const int third = row1.getWidth() / 3;
-        in1.setBounds (row1.removeFromLeft (third).withSizeKeepingCentre (34, 34).translated (0, 6));
+        in1.setBounds (row1.removeFromLeft (third).withSizeKeepingCentre (52, 52).translated (0, 4));
         powerArea = row1.removeFromLeft (third);
-        power.setBounds (powerArea.withSizeKeepingCentre (26, 44).translated (0, 6));
-        in2.setBounds (row1.withSizeKeepingCentre (34, 34).translated (0, 6));
+        power.setBounds (powerArea.withSizeKeepingCentre (52, 52).translated (0, 4));
+        in2.setBounds (row1.withSizeKeepingCentre (52, 52).translated (0, 4));
 
-        cr.removeFromTop (14);
-        auto row2 = cr.removeFromTop (78);
+        cr.removeFromTop (8);
+        auto row2 = cr.removeFromTop (74);
         gainArea = row2;
         gain1.setBounds (row2.removeFromLeft (third));
         linkArea = row2.removeFromLeft (third);
-        link.setBounds (linkArea.withSizeKeepingCentre (26, 44));
+        link.setBounds (linkArea.withSizeKeepingCentre (24, 40).translated (0, 3));
         gain2.setBounds (row2);
 
-        cr.removeFromTop (10);
-        auto row3 = cr.removeFromTop (86);
+        cr.removeFromTop (6);
+        auto row3 = cr.removeFromTop (84);
         lpArea = row3;
         const int side = (int) (row3.getWidth() * 0.4);
         lp1.setBounds (row3.removeFromLeft (side));
         lp2.setBounds (row3.removeFromRight (side));
 
-        mastering = cr.removeFromTop (22);
+        mastering = cr.removeFromTop (18);
 
-        auto row4 = cr.removeFromTop (86);
+        auto row4 = cr.removeFromTop (84);
         hpArea = row4;
         hp1.setBounds (row4.removeFromLeft (side));
         hp2.setBounds (row4.removeFromRight (side));
@@ -648,27 +834,23 @@ private:
         // labels
         g.setColour (colours::engraving);
         g.setFont (engraved (10.5f));
-        g.drawText ("IN", juce::Rectangle<int> (centre.getX(), powerArea.getY() - 6, centre.getWidth() / 3 + 6, 12), juce::Justification::centred);
-        g.drawText ("IN", juce::Rectangle<int> (centre.getRight() - centre.getWidth() / 3 - 6, powerArea.getY() - 6, centre.getWidth() / 3, 12), juce::Justification::centred);
-        g.drawText ("POWER", powerArea.withHeight (12).translated (0, -6), juce::Justification::centred);
+        g.drawText ("IN", juce::Rectangle<int> (centre.getX(), powerArea.getY() - 2, centre.getWidth() / 3 + 6, 12), juce::Justification::centred);
+        g.drawText ("IN", juce::Rectangle<int> (centre.getRight() - centre.getWidth() / 3 - 6, powerArea.getY() - 2, centre.getWidth() / 3, 12), juce::Justification::centred);
+        g.drawText ("POWER", powerArea.withHeight (12).translated (0, -2), juce::Justification::centred);
         g.drawText ("GAIN", linkArea.withHeight (12).translated (0, linkArea.getHeight() - 8), juce::Justification::centred);
-        g.drawText ("LINK", linkArea.withHeight (12).translated (0, -10), juce::Justification::centred);
+        g.drawText ("LINK", linkArea.withHeight (12).translated (0, 1), juce::Justification::centred);
         g.drawFittedText ("LOW\nPASS", lpArea.withSizeKeepingCentre (50, 28), juce::Justification::centred, 2);
         g.drawFittedText ("HIGH\nPASS", hpArea.withSizeKeepingCentre (50, 28), juce::Justification::centred, 2);
 
         g.setFont (engraved (13.0f));
         g.drawText ("MASTERING", mastering, juce::Justification::centred);
-
-        // power pilot light next to the switch
-        const auto pilot = juce::Rectangle<float> (7.0f, 7.0f).withCentre (powerArea.toFloat().getCentre().translated (22.0f, 6.0f));
-        g.setColour (poweredOn ? colours::curve1 : juce::Colour (0xff2a2730));
-        g.fillEllipse (pilot);
     }
 
     LanternProcessor& processor;
     PanelLookAndFeel panelLnf;
     std::array<std::array<std::unique_ptr<BandModule>, 4>, 2> modules;
-    Lever power, link;
+    Lamp power;
+    Lever link;
     Lamp in1, in2;
     ScaleKnob gain1, gain2, lp1, lp2, hp1, hp2;
     juce::Rectangle<int> centre, logoArea, powerArea, gainArea, linkArea, lpArea, hpArea, mastering;
