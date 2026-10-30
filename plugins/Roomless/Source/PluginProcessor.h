@@ -16,6 +16,7 @@ public:
     using AudioProcessor::processBlockBypassed;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    juce::AudioProcessorParameter* getBypassParameter() const override { return state.getParameter ("bypass"); }
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -44,7 +45,7 @@ private:
     deadroom::DereverbEngine engine;
     deadroom::DelayCompensator dryDelay;   // aligns the dry signal for Mix and for bypass
     juce::AudioBuffer<float> dry;
-    juce::LinearSmoothedValue<float> mix, output;
+    juce::LinearSmoothedValue<float> mix, output, bypassMix;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RoomlessProcessor)
 };

@@ -45,6 +45,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout RoomlessProcessor::createLay
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "listen_removed", 1 }, "Listen to Removed", false));
 
+    // Engage lamp = host bypass (1 = bypassed)
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "bypass", 1 }, "Bypass", false));
+
     return layout;
 }
 
@@ -79,6 +82,8 @@ void RoomlessProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     output.reset (sampleRate, 0.05);
     mix.setCurrentAndTargetValue (state.getRawParameterValue ("mix")->load() / 100.0f);
     output.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (state.getRawParameterValue ("output")->load()));
+    bypassMix.reset (sampleRate, 0.03);
+    bypassMix.setCurrentAndTargetValue (state.getRawParameterValue ("bypass")->load() > 0.5f ? 1.0f : 0.0f);
 }
 
 void RoomlessProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -113,16 +118,19 @@ void RoomlessProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     mix.setTargetValue (s.listenRemoved ? 1.0f : v ("mix") / 100.0f);
     output.setTargetValue (juce::Decibels::decibelsToGain (v ("output")));
+    bypassMix.setTargetValue (v ("bypass") > 0.5f ? 1.0f : 0.0f);
 
     for (int i = 0; i < n; ++i)
     {
         const float w = mix.getNextValue();
         const float g = output.getNextValue();
+        const float b = bypassMix.getNextValue();   // Engage off: crossfade to the latency-matched dry signal
 
         for (int ch = 0; ch < chans; ++ch)
         {
             auto* d = buffer.getWritePointer (ch);
-            d[i] = (d[i] * w + dry.getSample (ch, i) * (1.0f - w)) * g;
+            const float wet = (d[i] * w + dry.getSample (ch, i) * (1.0f - w)) * g;
+            d[i] = wet * (1.0f - b) + dry.getSample (ch, i) * b;
         }
     }
 }

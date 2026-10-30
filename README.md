@@ -27,7 +27,11 @@ Controls:
 - **Strength**: how much of the predicted tail is removed (100 % = model estimate).
 - **Max reduction**: no frequency is ever turned down further than this. Lower sounds more natural.
 - **Smoothing**: higher values avoid watery or chirpy artifacts, at the cost of a slower response.
-- **Mix**, **Output**, **Listen to removed** (hear only what is taken out).
+- **Mix**, **Output**, the **Clean/Room** switch (down: hear only what is taken out) and the
+  **Engage** lamp (off = bypass, also the host's bypass parameter).
+
+The faceplate matches Lantern and Duotone; the reduction meter above it can be hidden and
+the window can be resized.
 
 Latency: 2048 samples at 44.1/48 kHz (4096 at 88.2/96 kHz).
 

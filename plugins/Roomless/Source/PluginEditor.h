@@ -3,7 +3,12 @@
 #include "PluginProcessor.h"
 #include "ui/Theme.h"
 
-class RoomlessEditor : public juce::AudioProcessorEditor, private juce::Timer
+/**
+    Roomless's editor: a DeadRoom rack faceplate matching Lantern and Duotone, with a
+    reduction meter above it that can be hidden. Drawn at a fixed design size and
+    scaled to the window.
+*/
+class RoomlessEditor : public juce::AudioProcessorEditor
 {
 public:
     explicit RoomlessEditor (RoomlessProcessor&);
@@ -13,21 +18,15 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override;
-    void toggleLearning();
-    void applyLearnedDecay (float seconds);
+    void setMeterVisible (bool visible);
+    int designHeight() const;
 
     RoomlessProcessor& processor;
     deadroom::ui::LookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 700 };
 
-    deadroom::ui::Knob decay, bassDecay, strength, reduction, smoothing, mix, output;
-    deadroom::ui::Switch listenRemoved;
-    juce::TextButton learn { "Learn room" };
-    juce::Label learnStatus;
-
-    juce::Rectangle<int> historyArea;
-    std::vector<float> history;   // recent reduction values in dB, newest last
+    std::unique_ptr<juce::Component> content;
+    bool meterVisible = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RoomlessEditor)
 };
