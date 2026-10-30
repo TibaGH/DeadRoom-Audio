@@ -8,6 +8,7 @@
 #include "dsp/LinearPhaseConvolver.h"
 #include "dsp/TubeCircuit.h"
 #include "dsp/BaxModel.h"
+#include "dsp/DistanceEngine.h"
 
 #include <cstdio>
 #include <random>
@@ -592,6 +593,213 @@ void testBax()
     }
 }
 
+//==============================================================================
+/** RT60 of an impulse response in the 1 kHz octave band (Schroeder integration, -5 to -25 dB fit). */
+double rt60At1k (const std::vector<float>& ir, double fs)
+{
+    // RBJ band-pass, 1 kHz, one octave
+    const double w0 = juce::MathConstants<double>::twoPi * 1000.0 / fs, q = 1.41;
+    const double alpha = std::sin (w0) / (2.0 * q), a0 = 1.0 + alpha;
+    const double b0 = alpha / a0, b2 = -alpha / a0, a1 = -2.0 * std::cos (w0) / a0, a2 = (1.0 - alpha) / a0;
+
+    std::vector<double> y (ir.size());
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (size_t i = 0; i < ir.size(); ++i)
+    {
+        const double x = ir[i];
+        const double v = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x; y2 = y1; y1 = v;
+        y[i] = v * v;
+    }
+
+    std::vector<double> edc (y.size());
+    double acc = 0.0;
+    for (size_t i = y.size(); i-- > 0;) { acc += y[i]; edc[i] = acc; }
+
+    const double total = edc[0];
+    double t5 = -1, t25 = -1;
+    for (size_t i = 0; i < edc.size(); ++i)
+    {
+        const double db = 10.0 * std::log10 (edc[i] / total + 1e-30);
+        if (t5 < 0 && db <= -5.0)  t5 = (double) i / fs;
+        if (t25 < 0 && db <= -25.0) { t25 = (double) i / fs; break; }
+    }
+
+    return (t5 >= 0 && t25 > t5) ? 3.0 * (t25 - t5) : -1.0;
+}
+
+double rms (const std::vector<float>& v, size_t from, size_t to)
+{
+    double e = 0.0;
+    for (size_t i = from; i < to; ++i) e += (double) v[i] * v[i];
+    return std::sqrt (e / (double) (to - from));
+}
+
+/** Runs a mono signal through the engine and returns the output. */
+std::vector<float> runDistance (const deadroom::DistanceSettings& s, const std::vector<float>& in, double fs = 48000.0)
+{
+    deadroom::DistanceEngine engine;
+    engine.prepare (fs, 512, 1);
+    engine.setSettings (s);
+    auto out = in;
+    processInBlocks (out, [&] (auto& b) { engine.process (b); }, 512);
+    return out;
+}
+
+void testFarfield()
+{
+    std::puts ("\nFarfield: room reverbs");
+    const double fs = 48000.0;
+
+    for (int room = 0; room < deadroom::DistanceModel::numRooms; ++room)
+    {
+        const auto& r = deadroom::DistanceModel::room (room);
+        deadroom::RoomReverb rev;
+        rev.prepare (fs);
+        rev.configure (room, 1.0f, 0.0f, deadroom::RoomReverb::measureTailNormalisation (fs, room));
+
+        std::vector<float> ir ((size_t) (fs * (r.rt60 * 1.6 + 0.3)));
+        float eL, eR, tL, tR;
+        double energy = 0.0, reference = 0.0;
+        bool finite = true;
+        deadroom::RoomReverb::SpeechBand bandA (fs), bandB (fs);
+        for (size_t i = 0; i < ir.size(); ++i)
+        {
+            rev.process (i == 0 ? 1.0f : 0.0f, eL, eR, tL, tR);
+            ir[i] = tL;
+            const double a = bandA.process (tL), b = bandB.process (i == 0 ? 1.0 : 0.0);
+            energy += a * a;
+            reference += b * b;
+            finite = finite && std::isfinite (tL);
+        }
+        energy /= reference;
+
+        const double rt = rt60At1k (ir, fs);
+        char label[96];
+        std::snprintf (label, sizeof (label), "%-12s RT60 at 1 kHz (target %.2f s)", r.name, r.rt60);
+        check (finite && std::abs (rt - r.rt60) / r.rt60 < 0.2, label, rt, "s");
+        std::snprintf (label, sizeof (label), "%-12s tail energy in the speech band", r.name);
+        check (std::abs (10.0 * std::log10 (energy)) < 0.5, label, 10.0 * std::log10 (energy), "dB");
+    }
+
+    std::puts ("\nFarfield: distance behaviour");
+
+    // critical distance: direct and reverberant field equal when the trim is undone
+    {
+        deadroom::DistanceSettings s;
+        s.room = 2;
+        const auto& r = deadroom::DistanceModel::room (2);
+        s.distance = (float) (std::log (r.criticalDistance / r.minDistance) / std::log (r.maxDistance / r.minDistance));
+        s.reverbDb = -r.reverbTrimDb;
+        s.earlyDb = -80.0f;
+        const auto st = deadroom::DistanceModel::compute (s);
+        check (std::abs (st.drDb) < 0.2, "Large room: direct = reverb at the critical distance", st.drDb, "dB");
+    }
+
+    // closest distance, no reverb: flat and at unity
+    {
+        deadroom::DistanceSettings s;
+        s.room = 1; s.distance = 0.0f; s.reverbDb = -120.0f; s.earlyDb = -120.0f;
+        std::vector<float> imp (16384, 0.0f); imp[0] = 1.0f;
+        const auto h = runDistance (s, imp);
+        check (std::abs (responseDb (h, 1000.0, fs)) < 0.2, "closest, dry: level at 1 kHz", responseDb (h, 1000.0, fs), "dB");
+        check (std::abs (responseDb (h, 10000.0, fs)) < 0.5, "closest, dry: level at 10 kHz", responseDb (h, 10000.0, fs), "dB");
+    }
+
+    // far distance: the high cut lands where the model says
+    {
+        deadroom::DistanceSettings s;
+        s.room = 1; s.distance = 1.0f; s.reverbDb = -120.0f; s.earlyDb = -120.0f; s.levelDrop = 1.0f;
+        const auto st = deadroom::DistanceModel::compute (s);
+        std::vector<float> imp (16384, 0.0f); imp[0] = 1.0f;
+        const auto h = runDistance (s, imp);
+        const double ref = responseDb (h, 1000.0, fs);
+        const double atCut = responseDb (h, st.highCutHz, fs) - ref;
+        std::printf ("         Medium room at %.1f m: low cut %.0f Hz, high cut %.0f Hz\n", st.metres, st.lowCutHz, st.highCutHz);
+        check (atCut < -2.0 && atCut > -4.5, "far: response at the high cut frequency", atCut, "dB");
+    }
+
+    // level drop 0 %: loudness stays put while the source moves away
+    {
+        std::mt19937 rng (9);
+        std::normal_distribution<float> nd (0.0f, 0.1f);
+        std::vector<float> noise ((size_t) (fs * 4.0));
+        for (auto& x : noise) x = nd (rng);
+
+        // 1 kHz band so the distance filters do not dominate the comparison
+        auto band = [&] (std::vector<float> v)
+        {
+            const double w0 = juce::MathConstants<double>::twoPi * 1000.0 / fs, q = 0.7;
+            const double alpha = std::sin (w0) / (2.0 * q), a0 = 1.0 + alpha;
+            double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+            for (auto& x : v)
+            {
+                const double in = x;
+                const double y = (alpha / a0) * in - (alpha / a0) * x2 - (-2.0 * std::cos (w0) / a0) * y1 - ((1.0 - alpha) / a0) * y2;
+                x2 = x1; x1 = in; y2 = y1; y1 = y;
+                x = (float) y;
+            }
+            return v;
+        };
+
+        for (int room : { 1, 3 })
+        {
+            double levels[3];
+            int k = 0;
+            for (float t : { 0.0f, 0.5f, 1.0f })
+            {
+                deadroom::DistanceSettings s;
+                s.room = room; s.distance = t; s.levelDrop = 0.0f; s.highAmount = 0.0f; s.lowAmount = 0.0f;
+                const auto out = band (runDistance (s, noise));
+                levels[k++] = 20.0 * std::log10 (rms (out, (size_t) (fs * 2.5), out.size()));
+            }
+
+            char label[96];
+            std::snprintf (label, sizeof (label), "%s, level drop 0 %%: loudness near vs far", deadroom::DistanceModel::room (room).name);
+            const double spread = std::max ({ levels[0], levels[1], levels[2] }) - std::min ({ levels[0], levels[1], levels[2] });
+            check (spread < 2.0, label, spread, "dB spread");
+        }
+    }
+
+    // stability: noise, room switches on the fly, silence -> finite and decaying
+    {
+        deadroom::DistanceEngine engine;
+        engine.prepare (fs, 512, 2);
+        std::mt19937 rng (4);
+        std::normal_distribution<float> nd (0.0f, 0.3f);
+        bool finite = true;
+        double tailEnergy = 0.0;
+
+        for (int block = 0; block < (int) (fs * 12 / 512); ++block)
+        {
+            deadroom::DistanceSettings s;
+            s.room = (block / 60) % deadroom::DistanceModel::numRooms;
+            s.distance = 0.5f + 0.5f * std::sin ((float) block * 0.05f);
+            s.decay = 1.5f; s.brightness = 0.8f; s.width = 1.5f;
+            engine.setSettings (s);
+
+            juce::AudioBuffer<float> buf (2, 512);
+            const bool silent = block > (int) (fs * 8 / 512);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buf.setSample (ch, i, silent ? 0.0f : nd (rng));
+
+            engine.process (buf);
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                {
+                    const float v = buf.getSample (ch, i);
+                    finite = finite && std::isfinite (v) && std::abs (v) < 100.0f;
+                    if (block > (int) (fs * 11.5 / 512)) tailEnergy += (double) v * v;
+                }
+        }
+
+        check (finite, "output finite while switching rooms and distances", finite ? 1.0 : 0.0, "");
+        check (tailEnergy < 1.0e-4, "dies away after the input stops", tailEnergy, "");
+    }
+}
+
 } // namespace
 
 int main()
@@ -613,6 +821,7 @@ int main()
     testLanternChainLatency (false);
     testBaxandall();
     testBax();
+    testFarfield();
     testTubeCircuit();
 
     std::printf ("\n%s (%d failed)\n", failures == 0 ? "All checks passed" : "Some checks failed", failures);

@@ -503,4 +503,112 @@ inline void drawScrew (juce::Graphics& g, juce::Point<float> c, float size = 11.
     g.fillPath (socket);
 }
 
+//==============================================================================
+/** Small dark window with an amber readout, like a vintage panel display. */
+class Readout : public juce::Component
+{
+public:
+    void setText (const juce::String& t) { if (t != text) { text = t; repaint(); } }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (r.translated (0.0f, 1.0f), 3.0f);
+        g.setColour (juce::Colour (0xff0b0d0e));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.drawRoundedRectangle (r, 3.0f, 0.8f);
+
+        g.setColour (colour.withAlpha (isEnabled() ? 1.0f : 0.4f));
+        g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::bold)));
+        g.drawText (text, getLocalBounds(), juce::Justification::centred);
+    }
+
+    juce::Colour colour { 0xffffb04a };
+
+private:
+    juce::String text;
+};
+
+//==============================================================================
+/** A knob cell: engraved caption plus an amber value readout under the knob. */
+struct KnobCell
+{
+    KnobCell (juce::AudioProcessorValueTreeState& state, const juce::String& id, juce::String caption, bool aluminium)
+        : knob (state, id, {}, aluminium ? 0.66f : 0.56f), title (std::move (caption))
+    {
+        knob.setTicksOnly (11);
+
+        if (aluminium)
+            knob.slider.getProperties().set ("knobStyle", "alu");
+
+        knob.slider.onValueChange = [this] { update(); };
+        update();
+    }
+
+    void update() { readout.setText (knob.slider.getTextFromValue (knob.slider.getValue())); }
+
+    ScaleKnob knob;
+    Readout readout;
+    juce::String title;
+};
+
+inline void drawSectionFrame (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, juce::Colour ink)
+{
+    const auto r = area.toFloat().reduced (0.5f, 6.0f);
+    g.setFont (engraved (12.5f));
+    const float tw = (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), title) + 16.0f;
+    const float hx = r.getCentreX() - tw * 0.5f;
+
+    juce::Path frame;
+    frame.startNewSubPath (hx, r.getY());
+    frame.lineTo (r.getX() + 8.0f, r.getY());
+    frame.quadraticTo (r.getX(), r.getY(), r.getX(), r.getY() + 8.0f);
+    frame.lineTo (r.getX(), r.getBottom() - 8.0f);
+    frame.quadraticTo (r.getX(), r.getBottom(), r.getX() + 8.0f, r.getBottom());
+    frame.lineTo (r.getRight() - 8.0f, r.getBottom());
+    frame.quadraticTo (r.getRight(), r.getBottom(), r.getRight(), r.getBottom() - 8.0f);
+    frame.lineTo (r.getRight(), r.getY() + 8.0f);
+    frame.quadraticTo (r.getRight(), r.getY(), r.getRight() - 8.0f, r.getY());
+    frame.lineTo (hx + tw, r.getY());
+
+    g.setColour (ink.withMultipliedAlpha (0.35f));
+    g.strokePath (frame, juce::PathStrokeType (1.0f));
+    g.setColour (ink);
+    g.drawText (title, juce::Rectangle<float> (hx, r.getY() - 8.0f, tw, 16.0f), juce::Justification::centred);
+}
+
+
+/** The DeadRoom logo as engraved on every faceplate, with the product name on a small plate. */
+inline void drawDeadRoomLogo (juce::Graphics& g, juce::Rectangle<float> l, const juce::String& model)
+{
+    const auto ink = colours::engraving;
+    const float midY = l.getY() + 18.0f;
+
+    g.setColour (ink.withAlpha (0.6f));
+    g.drawHorizontalLine ((int) midY, l.getCentreX() - 76.0f, l.getCentreX() - 18.0f);
+    g.drawHorizontalLine ((int) midY, l.getCentreX() + 18.0f, l.getCentreX() + 76.0f);
+
+    g.setColour (ink);
+    g.drawEllipse (juce::Rectangle<float> (22.0f, 22.0f).withCentre ({ l.getCentreX(), midY }), 1.3f);
+    g.drawLine ({ l.getCentreX() - 11.0f, midY, l.getCentreX() + 11.0f, midY }, 1.3f);
+
+    g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultSerifFontName(), 27.0f, juce::Font::plain)).withExtraKerningFactor (0.22f));
+    g.drawText ("DEADROOM", juce::Rectangle<float> (l.getX(), midY + 12.0f, l.getWidth(), 30.0f), juce::Justification::centred);
+
+    g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultSerifFontName(), 11.5f, juce::Font::bold)).withExtraKerningFactor (0.6f));
+    g.setColour (ink.withAlpha (0.8f));
+    g.drawText ("AUDIO", juce::Rectangle<float> (l.getX(), midY + 42.0f, l.getWidth(), 14.0f), juce::Justification::centred);
+
+    const auto plate = juce::Rectangle<float> (l.getCentreX() - 60.0f, midY + 66.0f, 120.0f, 22.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.fillRoundedRectangle (plate, 3.0f);
+    g.setColour (ink.withAlpha (0.25f));
+    g.drawRoundedRectangle (plate, 3.0f, 0.8f);
+    g.setColour (ink);
+    g.setFont (engraved (11.0f).withExtraKerningFactor (0.35f));
+    g.drawText (model, plate, juce::Justification::centred);
+}
+
 } // namespace deadroom::hw

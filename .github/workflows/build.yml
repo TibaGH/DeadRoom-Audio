@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for p in Roomless Duotone Lantern; do
+          for p in Roomless Duotone Lantern Farfield; do
             base="build/plugins/$p/${p}_artefacts/Release"
             for fmt in VST3 AU AAX Standalone; do
               if [ -d "$base/$fmt" ]; then

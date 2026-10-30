@@ -8,6 +8,7 @@ VST3, AU (macOS), AAX (macOS/Windows) and a standalone app.
 | Roomless | Removes room reverb from recordings made in imperfect rooms |
 | Duotone  | Mid/Side Baxandall tone EQ |
 | Lantern  | Linear-phase passive mastering EQ modelled on the Manley Massive Passive, with gentle tube warmth |
+| Farfield | Places dialogue at a distance in a room or outdoors (for dubbing and ADR) |
 
 ## Roomless (de-reverb)
 
@@ -110,6 +111,43 @@ the manuals. No schematic was available, so the EQ is modelled by its documented
 (not component by component), and the tube stage resistor values, levels and transformer
 constants are estimates calibrated to the published THD figure. It is in the spirit of the
 hardware, not a guaranteed match.
+
+## Farfield (dialogue distance)
+
+Places a voice at a distance in a selectable space, for dubbing and ADR. Choose a **Room**
+and turn **Distance**; everything else follows from those two:
+
+- **Direct sound** falls with 1/r, while the **reverberant field** stays roughly constant in
+  the room. They are equal at the room's critical distance (r_c = 0.057 * sqrt(V / RT60)),
+  so the direct-to-room balance changes the way it does in a real space.
+- **Low cut** and **high cut** grow with distance (log-frequency), towards a per-room target.
+- **Pre-delay** shrinks with distance: far away, the first reflections arrive right after the
+  direct sound.
+- **Level drop** decides how much quieter the voice gets: 0 % keeps the loudness constant
+  (measured in the speech band), 100 % is the physical drop. Default 40 %.
+- The direct sound is never delayed, so it stays in sync with picture. Zero latency.
+
+| Room        | Distance range | RT60   | Critical distance | Far low cut / high cut |
+|-------------|----------------|--------|-------------------|------------------------|
+| Small room  | 0.3 - 4 m      | 0.35 s | 0.6 m             | 160 Hz / 8 kHz         |
+| Medium room | 0.3 - 8 m      | 0.60 s | 1.0 m             | 180 Hz / 7 kHz         |
+| Large room  | 0.5 - 16 m     | 1.2 s  | 2.3 m             | 200 Hz / 6 kHz         |
+| Hall        | 0.5 - 30 m     | 2.6 s  | 4.3 m             | 220 Hz / 5 kHz         |
+| Outdoors    | 0.5 - 60 m     | 0.9 s (faint ambience) | -     | 300 Hz / 3.5 kHz       |
+
+Outdoors there are no walls: a ground reflection (talker and listener 1.7 m high), a few
+distant echoes off buildings, a very faint ambience and strong high-frequency loss.
+These values are starting points from room acoustics, meant to be tuned by ear.
+
+The reverb is a 16-line feedback delay network with frequency-dependent decay (longer in the
+lows, shorter in the highs), input diffusion, slow modulation and room-specific early
+reflections. Switching rooms starts the new room while the old one rings out.
+
+**Advanced** opens a second plate: low cut and high cut amount, level drop, output, reverb
+level, decay, pre-delay, tone and width, and early reflections. All are trims on the
+selected room, so switching rooms keeps them meaningful.
+
+Mono in, mono or stereo out; stereo in, stereo out.
 
 ## Building
 

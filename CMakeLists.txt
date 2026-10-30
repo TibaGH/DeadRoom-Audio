@@ -71,6 +71,7 @@ endfunction()
 add_subdirectory(plugins/Roomless)
 add_subdirectory(plugins/Duotone)
 add_subdirectory(plugins/Lantern)
+add_subdirectory(plugins/Farfield)
 
 if(DEADROOM_BUILD_TESTS)
     add_subdirectory(tests)
