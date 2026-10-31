@@ -169,30 +169,25 @@ The GitHub Actions workflow builds macOS and Windows and uploads all formats as 
 
 ## Installing
 
-Download the latest build from the **Actions** tab (latest run, *Artifacts*) and unzip it.
-On macOS the download contains `DeadRoom-Audio-macOS.zip`; unzip that one too (double-click
-in Finder keeps the plugin bundles intact). Copy each plugin to the standard folder:
+**macOS:** download **DeadRoom-Audio-macOS-Installer** from the latest run in the **Actions**
+tab and open `DeadRoom-Audio-<version>.pkg`. It installs every plugin as VST3, Audio Unit
+and AAX into the standard system folders (`Customise` lets you leave plugins out) and
+removes hand-installed copies from your own Library, so hosts do not see them twice.
+No Terminal steps are needed afterwards.
 
-| Format | macOS | Windows |
-|--------|-------|---------|
-| VST3 | `/Library/Audio/Plug-Ins/VST3/` | `C:\Program Files\Common Files\VST3\` |
-| AU | `/Library/Audio/Plug-Ins/Components/` | n/a |
-| AAX | `/Library/Application Support/Avid/Audio/Plug-Ins/` | `C:\Program Files\Common Files\Avid\Audio\Plug-Ins\` |
+The installer is not signed with an Apple Developer ID yet, so the first time macOS says it
+cannot verify it. Open **System Settings > Privacy & Security**, scroll down and click
+**Open Anyway** next to the DeadRoom message, then open the installer again.
 
-The macOS builds are only signed ad hoc, not with an Apple Developer ID, so macOS reports
-them as "damaged" after downloading. Remove the download quarantine once per plugin:
+**Windows:** download **DeadRoom-Audio-Windows**, unzip it and copy the plugins:
 
-```bash
-sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/Lantern.vst3
-```
+| Format | Windows |
+|--------|---------|
+| VST3 | `C:\Program Files\Common Files\VST3\` |
+| AAX | `C:\Program Files\Common Files\Avid\Audio\Plug-Ins\` |
 
-If a plugin still refuses to load, sign it again locally:
-
-```bash
-sudo codesign --force --deep --sign - /Library/Audio/Plug-Ins/VST3/Lantern.vst3
-```
-
-Then restart or rescan your DAW.
+The **DeadRoom-Audio-macOS** download still contains the loose plugin bundles for manual
+installs; those need `xattr -dr com.apple.quarantine` before macOS will load them.
 
 ### AAX and Pro Tools
 

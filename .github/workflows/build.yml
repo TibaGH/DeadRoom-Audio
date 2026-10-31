@@ -66,6 +66,8 @@ jobs:
             codesign --force --deep --sign - "$bundle"
             codesign --verify --deep --strict "$bundle"
           done
+          version=$(sed -n 's/^project(DeadRoomAudio VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          packaging/package-macos.sh dist "$version" installer
           ditto -c -k --keepParent dist DeadRoom-Audio-macOS.zip
           rm -rf dist && mkdir dist && mv DeadRoom-Audio-macOS.zip dist/
 
@@ -73,3 +75,11 @@ jobs:
         with:
           name: DeadRoom-Audio-${{ matrix.name }}
           path: dist
+
+      - name: Upload macOS installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeadRoom-Audio-macOS-Installer
+          path: installer/*.pkg
+          if-no-files-found: error
