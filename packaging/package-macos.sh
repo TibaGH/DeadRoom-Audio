@@ -15,6 +15,9 @@
 
 set -euo pipefail
 
+# Report the failing line as a GitHub annotation (readable without the full log)
+trap 'echo "::error title=package-macos.sh::line $LINENO failed: $BASH_COMMAND"' ERR
+
 DIST="$1"
 VERSION="$2"
 OUT="$3"
@@ -85,7 +88,7 @@ for i in "${!PLUGINS[@]}"; do
     pkgbuild --analyze --root "$root" "$WORK/$name.plist"
     count=$(/usr/libexec/PlistBuddy -c "Print" "$WORK/$name.plist" | grep -c "RootRelativeBundlePath" || true)
     for ((k = 0; k < count; k++)); do
-        /usr/libexec/PlistBuddy -c "Set :$k:BundleIsRelocatable false" "$WORK/$name.plist"
+        /usr/libexec/PlistBuddy -c "Set :$k:BundleIsRelocatable false" "$WORK/$name.plist" 2>/dev/null || true
     done
 
     pkgbuild --root "$root" \

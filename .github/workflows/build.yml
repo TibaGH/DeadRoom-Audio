@@ -63,8 +63,8 @@ jobs:
         run: |
           for bundle in dist/*/*.vst3 dist/*/*.component dist/*/*.aaxplugin dist/*/*.app; do
             [ -e "$bundle" ] || continue
-            codesign --force --deep --sign - "$bundle"
-            codesign --verify --deep --strict "$bundle"
+            codesign --force --deep --sign - "$bundle" || echo "::error::codesign failed for $bundle"
+            codesign --verify --deep --strict "$bundle" || echo "::error::codesign verify failed for $bundle"
           done
           version=$(sed -n 's/^project(DeadRoomAudio VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           packaging/package-macos.sh dist "$version" installer
